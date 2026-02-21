@@ -1,16 +1,44 @@
-file_c = open("city.txt", 'w+', )
-city = ["A 55.75 33.62\n",
-        "B 53.2 50.15\n",
-        "C 59.94 30.31\n",
-        "D 54.33 48.39\n",
-        "E 53.53 49.35\n",
-        "F 60.71 28.75\n",
-        "G 44.56 38.08\n",
-        "H 48.48 135.08\n"]
+import random, math
 
+cities = []
+# Чтение файла и хранение в словаре
+with open("city.txt", 'r', encoding='utf-8') as file:
+    for line in file:
+        line = line.strip()
+        if not line or len(line) < 3:
+            continue
+        parts = line.split()
+        *name_cities, x, y = parts
 
-# Запись списка в файл
-with open("city.txt", "w") as file:
-    file.writelines(city)
+        cities.append([float(x), float(y), ' '.join(name_cities)])
 
-# Матрица Смежности + евклидово расстояние
+K = int(input("Введите кол-во кластеров: "))
+# Начальные центры, т.е. случайные города
+centers = [cities[i][:2] for i in random.sample(range(len(cities)), K)]
+
+# Евклидово Расстояние и сохранение кластера в массив (алгоритм до 10)
+for _ in range(10):
+    for city in cities:
+        dist = [math.hypot(city[0] - cx, city[1] - cy ) for cx, cy in centers]
+        cluster = dist.index(min(dist))
+        if len(city) == 3:
+            city.append(cluster)
+        else:
+            city[3] = cluster
+
+    # Новые центры кластеров
+    new_centers = []
+    for i in range(K):
+        pts = [c for c in cities if c[3] == i]
+        if pts:
+            avg_x = sum(p[0] for p in pts) / len(pts)
+            avg_y = sum(p[1] for p in pts) / len(pts)
+            new_centers.append([avg_x, avg_y])
+        else:
+            new_centers.append(centers[i]) # если кластер пустой - без изменений
+    centers = new_centers
+
+# Вывод
+for i in range(K):
+    cluster_name = [c[2] for c in cities if c[3] == i]
+    print(f"Кластер {i + 1}: {', '.join(cluster_name)}")
