@@ -1,23 +1,29 @@
 import random, math
 
-cities = []
 # Чтение файла и хранение в словаре
+cities = []
 with open("city.txt", 'r', encoding='utf-8') as file:
     for line in file:
-        line = line.strip()
+        line = line.strip() # Убрал пробелы и перевод строки
         if not line or len(line) < 3:
             continue
-        parts = line.split()
+        parts = line.split() # Разбив пробелами
         *name_cities, x, y = parts
-
         cities.append([float(x), float(y), ' '.join(name_cities)])
 
 K = int(input("Введите кол-во кластеров: "))
+
 # Начальные центры, т.е. случайные города
 centers = [cities[i][:2] for i in random.sample(range(len(cities)), K)]
 
-# Евклидово Расстояние и сохранение кластера в массив (алгоритм до 10)
-for _ in range(10):
+# Параметры для реализации алгоритма
+MAX_ITER = 100
+EPS = 1e-6 # Порог сходимости
+
+# Евклидово Расстояние и сохранение кластера в словарь с городами
+for iteration in range(MAX_ITER):
+    # Запоминаем старые центры для дальнейшего вычисления
+    old_centers = [c[:] for c in centers]
     for city in cities:
         dist = [math.hypot(city[0] - cx, city[1] - cy ) for cx, cy in centers]
         cluster = dist.index(min(dist))
@@ -26,9 +32,10 @@ for _ in range(10):
         else:
             city[3] = cluster
 
-    # Новые центры кластеров
+    # Новые центры кластеров, т.е. пересчёт центров
     new_centers = []
     for i in range(K):
+        # Все города, которые отнесены к i-ому кластеру
         pts = [c for c in cities if c[3] == i]
         if pts:
             avg_x = sum(p[0] for p in pts) / len(pts)
@@ -36,7 +43,18 @@ for _ in range(10):
             new_centers.append([avg_x, avg_y])
         else:
             new_centers.append(centers[i]) # если кластер пустой - без изменений
+
+    # Здесь происходит вычисление суммарного перемещения центра
+    move = sum(math.hypot(nc[0] - oc[0], nc[1] - oc[1]) for nc, oc in zip(new_centers, old_centers))
+
+    # Обновление центров
     centers = new_centers
+
+    if move < EPS:
+        print(f"Сошлось на {iteration + 1}")
+        break
+else:
+    print("Максимальное число итераций")
 
 # Вывод
 for i in range(K):
