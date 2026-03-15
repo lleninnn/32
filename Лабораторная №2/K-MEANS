@@ -1,0 +1,62 @@
+import random, math
+
+# Чтение файла и хранение в словаре
+cities = []
+with open("city.txt", 'r', encoding='utf-8') as file:
+    for line in file:
+        line = line.strip() # Убрал пробелы и перевод строки
+        if not line or len(line) < 3:
+            continue
+        parts = line.split() # Разбив пробелами
+        *name_cities, x, y = parts
+        cities.append([float(x), float(y), ' '.join(name_cities)])
+
+K = int(input("Введите кол-во кластеров: "))
+
+# Начальные центры, т.е. случайные города
+centers = [cities[i][:2] for i in random.sample(range(len(cities)), K)]
+
+# Параметры для реализации алгоритма
+MAX_ITER = 100
+EPS = 1e-6 # Порог сходимости
+
+# Евклидово Расстояние и сохранение кластера в словарь с городами
+for ite in range(MAX_ITER):
+    # Запоминаем старые центры для дальнейшего вычисления
+    old_centers = [c[:] for c in centers]
+    for city in cities:
+        dist = [math.hypot(city[0] - centx, city[1] - centy ) for centx, centy in centers]
+        cluster = dist.index(min(dist))
+        if len(city) == 3:
+            city.append(cluster)
+        else:
+            city[3] = cluster
+
+    # Новые центры кластеров, т.е. пересчёт центров
+    new_centers = []
+    for i in range(K):
+        # Все города, которые отнесены к i-ому кластеру
+        city_clust = [c for c in cities if c[3] == i]
+        if city_clust:
+            avg_x = sum(g[0] for g in city_clust) / len(city_clust)
+            avg_y = sum(g[1] for g in city_clust) / len(city_clust)
+            new_centers.append([avg_x, avg_y])
+        else:
+            new_centers.append(centers[i]) # если кластер пустой - без изменений
+
+    # Здесь происходит вычисление суммарного перемещения центра
+    move = sum(math.hypot(nc[0] - oc[0], nc[1] - oc[1]) for nc, oc in zip(new_centers, old_centers))
+
+    # Обновление центров
+    centers = new_centers
+
+    if move < EPS:
+        print(f"Сошлось на {ite + 1}")
+        break
+else:
+    print("Максимальное число итераций")
+
+# Вывод
+for i in range(K):
+    cluster_name = [c[2] for c in cities if c[3] == i]
+    print(f"Кластер {i + 1}: {', '.join(cluster_name)}")
