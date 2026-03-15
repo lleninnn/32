@@ -21,11 +21,11 @@ MAX_ITER = 100
 EPS = 1e-6 # Порог сходимости
 
 # Евклидово Расстояние и сохранение кластера в словарь с городами
-for iteration in range(MAX_ITER):
+for ite in range(MAX_ITER):
     # Запоминаем старые центры для дальнейшего вычисления
     old_centers = [c[:] for c in centers]
     for city in cities:
-        dist = [math.hypot(city[0] - cx, city[1] - cy ) for cx, cy in centers]
+        dist = [math.hypot(city[0] - centx, city[1] - centy ) for centx, centy in centers]
         cluster = dist.index(min(dist))
         if len(city) == 3:
             city.append(cluster)
@@ -36,10 +36,10 @@ for iteration in range(MAX_ITER):
     new_centers = []
     for i in range(K):
         # Все города, которые отнесены к i-ому кластеру
-        pts = [c for c in cities if c[3] == i]
-        if pts:
-            avg_x = sum(p[0] for p in pts) / len(pts)
-            avg_y = sum(p[1] for p in pts) / len(pts)
+        city_clust = [c for c in cities if c[3] == i]
+        if city_clust:
+            avg_x = sum(g[0] for g in city_clust) / len(city_clust)
+            avg_y = sum(g[1] for g in city_clust) / len(city_clust)
             new_centers.append([avg_x, avg_y])
         else:
             new_centers.append(centers[i]) # если кластер пустой - без изменений
@@ -51,7 +51,7 @@ for iteration in range(MAX_ITER):
     centers = new_centers
 
     if move < EPS:
-        print(f"Сошлось на {iteration + 1}")
+        print(f"Сошлось на {ite + 1}")
         break
 else:
     print("Максимальное число итераций")
