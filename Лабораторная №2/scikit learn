@@ -1,0 +1,87 @@
+import matplotlib.pyplot as plt        # для построения графиков
+from sklearn.cluster import KMeans     # алгоритм K-средних из библиотеки scikit-learn
+
+# ---------- ЧТЕНИЕ ДАННЫХ ИЗ ФАЙЛА ----------
+# Список, в котором будем хранить информацию о городах
+cities = []
+with open("city.txt", 'r', encoding='utf-8') as f:
+    for line in f:
+        line = line.strip()                # убираем лишние пробелы и символы перевода строки
+        if not line:                        # если строка пустая, пропускаем её
+            continue
+        parts = line.split()                # разбиваем строку по пробелам
+        # Последние две части — это координаты, а всё остальное — название города
+        *name_parts, x_str, y_str = parts
+        name = ' '.join(name_parts)         # соединяем части названия обратно через пробел
+        # Добавляем город в список как словарь с ключами 'name', 'x', 'y'
+        cities.append({
+            'name': name,
+            'x': float(x_str),
+            'y': float(y_str)
+        })
+
+# Проверяем, что файл не пустой
+if not cities:
+    print("Файл пуст")
+    exit()
+
+# Запрашиваем у пользователя количество кластеров K
+K = int(input("Введите количество кластеров K: "))
+# Проверяем, что K находится в допустимых пределах
+if K < 1 or K > len(cities):
+    print("K должно быть от 1 до", len(cities))
+    exit()
+
+# ПОДГОТОВКА ДАННЫХ ДЛЯ SKLEARN
+# Создаём список списков: каждый внутренний список содержит координаты одного города [x, y]
+X = [[city['x'], city['y']] for city in cities]
+
+# КЛАСТЕРИЗАЦИЯ МЕТОДОМ K-СРЕДНИХ
+# n_clusters=K - число кластеров, которое мы хотим получить
+# random_state=42 - фиксируем генератор случайных чисел, чтобы результаты были воспроизводимыми
+# n_init=10 - алгоритм запустится 10 раз с разными начальными центрами и выберет лучший результат
+kmeans = KMeans(n_clusters=K, random_state=42, n_init=10)
+
+# Обучаем модель на наших данных и получаем метки кластеров для каждого города
+labels = kmeans.fit_predict(X)
+
+# Получаем координаты финальных центров кластеров
+centers = kmeans.cluster_centers_
+
+# Группируем названия городов по меткам кластеров
+clusters = {}
+for idx, label in enumerate(labels):
+    # Для каждой метки добавляем название города в соответствующий список
+    clusters.setdefault(label, []).append(cities[idx]['name'])
+
+print("\nКластеры:")
+# Выводим кластеры в порядке возрастания меток
+for label, names in sorted(clusters.items()):
+    print(f"Кластер {label+1}: {', '.join(names)}")
+
+# Создаём фигуру размером 8x6 дюймов
+plt.figure(figsize=(8, 6))
+
+# Рисуем точки городов:
+#   координаты x и y берём из списка cities
+#   цвет точек определяем по меткам кластеров (labels), используя цветовую карту 'viridis'
+#   размер точек 80 пикселей
+plt.scatter([city['x'] for city in cities], [city['y'] for city in cities],
+            c=labels, cmap='viridis', s=80)
+
+# Рисуем центры кластеров красными крестиками
+plt.scatter(centers[:, 0], centers[:, 1], c='red', marker='X', s=100, label='Центры')
+plt.title(f'Кластеризация городов (K={K})')
+plt.xlabel('X координата')
+plt.ylabel('Y координата')
+
+# Добавляем цветовую шкалу, которая показывает соответствие цвета номеру кластера
+plt.colorbar(label='Кластер')
+
+# сетка для удобства восприятия
+plt.grid(True, linestyle='--', alpha=0.5)
+plt.legend()
+
+# Автоматически подгоняем элементы, чтобы не накладывались
+plt.tight_layout()
+plt.show()
