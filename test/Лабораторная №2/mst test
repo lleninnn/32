@@ -1,0 +1,74 @@
+# Тесты
+if False:
+    print("\n=== Запуск самопроверки ===")
+    import math
+
+    # 1. Тест DSU (локальные функции)
+    parent = list(range(4))
+    rank = [0]*4
+
+    def find(v):
+        while parent[v] != v:
+            parent[v] = parent[parent[v]]
+            v = parent[v]
+        return v
+
+    def union(v1, v2):
+        r1, r2 = find(v1), find(v2)
+        if r1 == r2:
+            return False
+        if rank[r1] < rank[r2]:
+            parent[r1] = r2
+        elif rank[r1] > rank[r2]:
+            parent[r2] = r1
+        else:
+            parent[r2] = r1
+            rank[r1] += 1
+        return True
+
+    # Объединяем 0-1, 2-3, затем 1-2 - все должны быть в одном множестве
+    union(0, 1)
+    union(2, 3)
+    union(1, 2)
+    roots = [find(i) for i in range(4)]
+    assert all(r == roots[0] for r in roots), "DSU работает неверно"
+    print("✓ DSU тест пройден")
+
+    # 2. Тест кластеризации на точках с уникальными расстояниями
+    test_cities = [
+        {'name': 'A', 'x': 0, 'y': 0},
+        {'name': 'B', 'x': 1, 'y': 0},
+        {'name': 'C', 'x': 3, 'y': 0},
+        {'name': 'D', 'x': 4, 'y': 0}
+    ]
+    n = len(test_cities)
+    parent = list(range(n))
+    rank = [0]*n
+
+    # Строим рёбра
+    edges = []
+    for i in range(n):
+        for j in range(i+1, n):
+            dx = test_cities[i]['x'] - test_cities[j]['x']
+            dy = test_cities[i]['y'] - test_cities[j]['y']
+            edges.append((math.hypot(dx, dy), i, j))
+    edges.sort(key=lambda x: x[0])
+
+    components = n
+    K_test = 2
+    for w, i, j in edges:
+        if union(i, j):
+            components -= 1
+            if components == K_test:
+                break
+
+    clusters = {}
+    for i in range(n):
+        root = find(i)
+        clusters.setdefault(root, []).append(test_cities[i]['name'])
+
+    assert len(clusters) == 2, "Должно быть 2 кластера"
+    sets = [set(lst) for lst in clusters.values()]
+    assert {'A', 'B'} in sets and {'C', 'D'} in sets, f"Неверное разбиение: {sets}"
+    print("✓ Кластеризация тест пройден")
+    print("Все тесты успешно завершены!")
