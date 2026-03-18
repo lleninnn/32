@@ -1,62 +1,121 @@
-import random, math
+import random
+import math
+import matplotlib.pyplot as plt
 
-# Чтение файла и хранение в словаре
+# ФУНКЦИЯ K-СРЕДНИХ
+def kmeans(cities, K, max_iter=100, eps=1e-6, seed=None):
+    """
+    Выполняет кластеризацию методом K-средних.
+    cities: список городов в формате [x, y, name]
+    K: число кластеров
+    max_iter: максимальное число итераций
+    eps: порог сходимости
+    seed: если задан, фиксирует генератор случайных чисел
+    Возвращает:
+        labels: список номеров кластеров для каждого города
+        centers: список центров кластеров
+        inertia: сумма квадратов расстояний до центров
+    """
+    if seed is not None:
+        random.seed(seed)
+    # Копия, чтобы не портить исходные данные
+    data = [row[:] for row in cities]  # каждый город: [x, y, name]
+    n = len(data)
+    # Инициализация центров случайными городами
+    centers = [data[i][:2] for i in random.sample(range(n), K)]
+
+    for _ in range(max_iter):
+        old_centers = [c[:] for c in centers]
+        # Распределение по кластерам
+        for city in data:
+            dist = [math.hypot(city[0] - cx, city[1] - cy) for cx, cy in centers]
+            cluster = dist.index(min(dist))
+            if len(city) == 3:
+                city.append(cluster)
+            else:
+                city[3] = cluster
+        # Пересчёт центров
+        new_centers = []
+        for i in range(K):
+            pts = [c for c in data if c[3] == i]
+            if pts:
+                avg_x = sum(p[0] for p in pts) / len(pts)
+                avg_y = sum(p[1] for p in pts) / len(pts)
+                new_centers.append([avg_x, avg_y])
+            else:
+                new_centers.append(centers[i])
+        # Проверка сходимости
+        move = sum(math.hypot(nc[0]-oc[0], nc[1]-oc[1]) for nc, oc in zip(new_centers, old_centers))
+        centers = new_centers
+        if move < eps:
+            break
+
+    # Сбор меток и вычисление инерции
+    labels = [city[3] for city in data]
+    inertia = 0.0
+    for i, city in enumerate(data):
+        cx, cy = centers[labels[i]]
+        dx = city[0] - cx
+        dy = city[1] - cy
+        inertia += dx*dx + dy*dy
+    return labels, centers, inertia
+
+# ЧТЕНИЕ ДАННЫХ
 cities = []
 with open("city.txt", 'r', encoding='utf-8') as file:
     for line in file:
-        line = line.strip() # Убрал пробелы и перевод строки
+        line = line.strip()
         if not line or len(line) < 3:
             continue
-        parts = line.split() # Разбив пробелами
+        parts = line.split()
         *name_cities, x, y = parts
         cities.append([float(x), float(y), ' '.join(name_cities)])
 
-K = int(input("Введите кол-во кластеров: "))
+if not cities:
+    print("Файл пуст")
+    exit()
 
-# Начальные центры, т.е. случайные города
-centers = [cities[i][:2] for i in random.sample(range(len(cities)), K)]
+# МЕТОД ЛОКТЯ
+ans = input("Хотите определить оптимальное K методом локтя? (y/n): ").strip().lower()
+if ans == 'y':
+    # Определяем диапазон K (не больше числа городов)
+    max_K = min(10, len(cities))
+    K_range = range(1, max_K + 1)
+    inertias = []
+    print("Вычисление инерции для K от 1 до", max_K)
+    for K in K_range:
+        # Фиксируем seed для воспроизводимости
+        _, _, inertia = kmeans(cities, K, seed=42)
+        inertias.append(inertia)
+        print(f"K={K}, инерция={inertia:.2f}")
 
-# Параметры для реализации алгоритма
-MAX_ITER = 100
-EPS = 1e-6 # Порог сходимости
+    # Построение графика
+    plt.figure(figsize=(8, 5))
+    plt.plot(K_range, inertias, 'bo-')
+    plt.xlabel('Количество кластеров K')
+    plt.ylabel('Сумма квадратов расстояний (инерция)')
+    plt.title('Метод локтя для выбора K')
+    plt.grid(True)
+    plt.show()
 
-# Евклидово Расстояние и сохранение кластера в словарь с городами
-for ite in range(MAX_ITER):
-    # Запоминаем старые центры для дальнейшего вычисления
-    old_centers = [c[:] for c in centers]
-    for city in cities:
-        dist = [math.hypot(city[0] - centx, city[1] - centy ) for centx, centy in centers]
-        cluster = dist.index(min(dist))
-        if len(city) == 3:
-            city.append(cluster)
-        else:
-            city[3] = cluster
-
-    # Новые центры кластеров, т.е. пересчёт центров
-    new_centers = []
-    for i in range(K):
-        # Все города, которые отнесены к i-ому кластеру
-        city_clust = [c for c in cities if c[3] == i]
-        if city_clust:
-            avg_x = sum(g[0] for g in city_clust) / len(city_clust)
-            avg_y = sum(g[1] for g in city_clust) / len(city_clust)
-            new_centers.append([avg_x, avg_y])
-        else:
-            new_centers.append(centers[i]) # если кластер пустой - без изменений
-
-    # Здесь происходит вычисление суммарного перемещения центра
-    move = sum(math.hypot(nc[0] - oc[0], nc[1] - oc[1]) for nc, oc in zip(new_centers, old_centers))
-
-    # Обновление центров
-    centers = new_centers
-
-    if move < EPS:
-        print(f"Сошлось на {ite + 1}")
-        break
+    # Запрос выбранного K
+    K = int(input("Введите выбранное K по графику: "))
 else:
-    print("Максимальное число итераций")
+    K = int(input("Введите кол-во кластеров: "))
 
-# Вывод
-for i in range(K):
-    cluster_name = [c[2] for c in cities if c[3] == i]
-    print(f"Кластер {i + 1}: {', '.join(cluster_name)}")
+# Проверка допустимости K
+if K < 1 or K > len(cities):
+    print("K должно быть от 1 до", len(cities))
+    exit()
+
+# КЛАСТЕРИЗАЦИЯ С ВЫБРАННЫМ K
+labels, centers, _ = kmeans(cities, K, seed=42)  # фиксируем seed для повторяемости
+
+# Вывод результатов
+clusters = {}
+for i, label in enumerate(labels):
+    clusters.setdefault(label, []).append(cities[i][2])
+
+print("\nРезультаты кластеризации:")
+for label, names in sorted(clusters.items()):
+    print(f"Кластер {label+1}: {', '.join(names)}")
