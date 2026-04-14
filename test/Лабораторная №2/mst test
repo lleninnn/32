@@ -32,7 +32,7 @@ if False:
     union(1, 2)
     roots = [find(i) for i in range(4)]
     assert all(r == roots[0] for r in roots), "DSU работает неверно"
-    print("✓ DSU тест пройден")
+    print("DSU тест пройден")
 
     # 2. Тест кластеризации на точках с уникальными расстояниями
     test_cities = [
@@ -70,5 +70,5 @@ if False:
     assert len(clusters) == 2, "Должно быть 2 кластера"
     sets = [set(lst) for lst in clusters.values()]
     assert {'A', 'B'} in sets and {'C', 'D'} in sets, f"Неверное разбиение: {sets}"
-    print("✓ Кластеризация тест пройден")
+    print("Кластеризация тест пройден")
     print("Все тесты успешно завершены!")
