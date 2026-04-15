@@ -1,5 +1,7 @@
 import matplotlib.pyplot as plt        # для построения графиков
 from sklearn.cluster import KMeans     # алгоритм K-средних из библиотеки scikit-learn
+import tracemalloc
+from datetime import datetime
 
 # ---------- ЧТЕНИЕ ДАННЫХ ИЗ ФАЙЛА ----------
 # Список, в котором будем хранить информацию о городах
@@ -33,8 +35,12 @@ if K < 1 or K > len(cities):
     exit()
 
 # ПОДГОТОВКА ДАННЫХ ДЛЯ SKLEARN
-# Создаём список списков: каждый внутренний список содержит координаты одного города [x, y]
+# Создаём список списков: каждый внутренний список содержит координаты одного города [x, y] (матрица признаков) строки - объекты, столбцы - признаки
 X = [[city['x'], city['y']] for city in cities]
+
+# Измерение времени и памяти
+tracemalloc.start()
+start_time = datetime.now()
 
 # КЛАСТЕРИЗАЦИЯ МЕТОДОМ K-СРЕДНИХ
 # n_clusters=K - число кластеров, которое мы хотим получить
@@ -42,22 +48,30 @@ X = [[city['x'], city['y']] for city in cities]
 # n_init=10 - алгоритм запустится 10 раз с разными начальными центрами и выберет лучший результат
 kmeans = KMeans(n_clusters=K, random_state=42, n_init=10)
 
-# Обучаем модель на наших данных и получаем метки кластеров для каждого города
+# Обучаем модель на наших данных и получаем метки кластеров для каждого города, получаем массив целых чисел
 labels = kmeans.fit_predict(X)
 
-# Получаем координаты финальных центров кластеров
+# Получаем координаты финальных центров кластеров после обучения
 centers = kmeans.cluster_centers_
 
 # Группируем названия городов по меткам кластеров
 clusters = {}
-for idx, label in enumerate(labels):
+for idx, label in enumerate(labels): # из последовательности - в индекс-значение (пары)
     # Для каждой метки добавляем название города в соответствующий список
-    clusters.setdefault(label, []).append(cities[idx]['name'])
+    clusters.setdefault(label, []).append(cities[idx]['name']) # извлекаем значение по указанному ключу, если он существует, а если ключа нет, вставляем ключ с указанным значением по умолчанию
+
+# Окончание измерений времени и памяти
+end_time = datetime.now()
+current_mem, peak_mem = tracemalloc.get_traced_memory()
+tracemalloc.stop()
 
 print("\nКластеры:")
 # Выводим кластеры в порядке возрастания меток
-for label, names in sorted(clusters.items()):
+for label, names in sorted(clusters.items()): # сортировка по возрастанию
     print(f"Кластер {label+1}: {', '.join(names)}")
+# Вывод метрик
+print(f"\nВремя выполнения: {(end_time - start_time).total_seconds():.6f} сек")
+print(f"Пиковое использование памяти: {peak_mem / 1024:.2f} КБ")
 
 # Создаём фигуру размером 8x6 дюймов
 plt.figure(figsize=(8, 6))
@@ -79,7 +93,7 @@ plt.ylabel('Y координата')
 plt.colorbar(label='Кластер')
 
 # сетка для удобства восприятия
-plt.grid(True, linestyle='--', alpha=0.5)
+plt.grid(True)
 plt.legend()
 
 # Автоматически подгоняем элементы, чтобы не накладывались
