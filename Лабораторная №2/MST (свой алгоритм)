@@ -1,9 +1,11 @@
 import math
+from datetime import datetime
+import tracemalloc
 
 # Чтение данных из файла
 # cities будет списком словарей, каждый словарь содержит название города и его координаты
 cities = []
-with open("city.txt", 'r', encoding='utf-8') as f:
+with open("city.txt", 'r', encoding='utf-8') as f: # закрытие файла после выхода из блока
     for line in f:
         line = line.strip()                # удаляем лишние пробелы и символы перевода строки
         if not line:                        # пропускаем пустые строки
@@ -19,7 +21,7 @@ with open("city.txt", 'r', encoding='utf-8') as f:
             'y': float(y_str)
         })
 
-n = len(cities)                              # количество городов
+n = len(cities)# количество городов
 if n == 0:
     print("Файл пуст")
     exit()
@@ -29,9 +31,13 @@ if K < 1 or K > n:
     print("K должно быть от 1 до", n)
     exit()
 
+# Измерение времени и памяти
+tracemalloc.start()
+start_time = datetime.now()
+
 # СИСТЕМА НЕПЕРЕСЕКАЮЩИХСЯ МНОЖЕСТВ (DSU)
 # каждому городу соответствует индекс от 0 до n-1.
-parent = list(range(n))   # parent[i] — "родитель" элемента i (изначально каждый сам себе родитель)
+parent = list(range(n))   # parent[i] — "родитель" элемента i (изначально каждый сам себе родитель, он же корень)
 rank = [0] * n            # rank[i] — ранг (глубина дерева) для балансировки при объединении
 
 def find(v):
@@ -88,11 +94,20 @@ if K < n:
 # проходим по всем городам, находим корень его множества и группируем названия по корням.
 clusters = {}
 for i in range(n):
-    root = find(i)                     # финальный корень для города i
+    root = find(i)                     # финальный корень для всех городов i
     # добавляем название города в список, соответствующий данному корню
-    clusters.setdefault(root, []).append(cities[i]['name'])
+    clusters.setdefault(root, []).append(cities[i]['name']) # извлекаем значение по указанному ключу, если он существует, а если ключа нет, вставляем ключ с указанным значением по умолчанию
+
+# Окончание измерений
+end_time = datetime.now()
+current_mem, peak_mem = tracemalloc.get_traced_memory()
+tracemalloc.stop()
 
 # ВЫВОД РЕЗУЛЬТАТОВ
 print("\nКластеры (метод MST + Краскал):")
 for idx, (root, names) in enumerate(clusters.items()):
     print(f"Кластер {idx+1}: {', '.join(names)}")
+
+# Вывод соответствующих метрик
+print(f"\nВремя выполнения: {(end_time - start_time).total_seconds():.6f} сек")
+print(f"Пиковое использование памяти: {peak_mem / 1024:.2f} КБ")
