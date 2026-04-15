@@ -1,8 +1,10 @@
 import random
 import math
 import matplotlib.pyplot as plt
+import tracemalloc
+from datetime import datetime
 
-# ФУНКЦИЯ K-СРЕДНИХ
+# ---------- ФУНКЦИЯ K-СРЕДНИХ ----------
 def kmeans(cities, K, max_iter=100, eps=1e-6, seed=None):
     """
     Выполняет кластеризацию методом K-средних.
@@ -37,23 +39,23 @@ def kmeans(cities, K, max_iter=100, eps=1e-6, seed=None):
         # Пересчёт центров
         new_centers = []
         for i in range(K):
-            pts = [c for c in data if c[3] == i]
+            pts = [c for c in data if c[3] == i] # генератор списков - берём из data все города i, у которых есть 4 элемент списка
             if pts:
                 avg_x = sum(p[0] for p in pts) / len(pts)
                 avg_y = sum(p[1] for p in pts) / len(pts)
                 new_centers.append([avg_x, avg_y])
             else:
-                new_centers.append(centers[i])
+                new_centers.append(centers[i]) # оставляем тот же центр, если кластер пуст
         # Проверка сходимости
-        move = sum(math.hypot(nc[0]-oc[0], nc[1]-oc[1]) for nc, oc in zip(new_centers, old_centers))
+        move = sum(math.hypot(nc[0]-oc[0], nc[1]-oc[1]) for nc, oc in zip(new_centers, old_centers)) # суммарное перемещение всех центров (zip создаёт пары)
         centers = new_centers
         if move < eps:
             break
 
     # Сбор меток и вычисление инерции
-    labels = [city[3] for city in data]
-    inertia = 0.0
-    for i, city in enumerate(data):
+    labels = [city[3] for city in data] # извлекаем 4 элемент
+    inertia = 0.0 # вычисляем инерцию - сумма квадратов расстояний от каждого города до его центров
+    for i, city in enumerate(data): # из списка - в последовательность(где индекс, значение)
         cx, cy = centers[labels[i]]
         dx = city[0] - cx
         dy = city[1] - cy
@@ -108,14 +110,27 @@ if K < 1 or K > len(cities):
     print("K должно быть от 1 до", len(cities))
     exit()
 
+# Измерение времени и памяти для финальной кластеризации
+tracemalloc.start()
+start_time = datetime.now()
+
 # КЛАСТЕРИЗАЦИЯ С ВЫБРАННЫМ K
 labels, centers, _ = kmeans(cities, K, seed=42)  # фиксируем seed для повторяемости
 
+# Окончание измерение метрик
+end_time = datetime.now()
+current_mem, peak_mem = tracemalloc.get_traced_memory()
+tracemalloc.stop()
+
 # Вывод результатов
 clusters = {}
-for i, label in enumerate(labels):
-    clusters.setdefault(label, []).append(cities[i][2])
+for i, label in enumerate(labels): # из последовательности в индекс-значение
+    clusters.setdefault(label, []).append(cities[i][2]) # извлекаем значение по указанному ключу, если он существует, а если ключа нет, вставляем ключ с указанным значением по умолчанию
 
 print("\nРезультаты кластеризации:")
-for label, names in sorted(clusters.items()):
+for label, names in sorted(clusters.items()): # сортируем кластеры по метке в порядке возрастания
     print(f"Кластер {label+1}: {', '.join(names)}")
+
+# Вывод соответствующих метрик
+print(f"\nВремя выполнения финальной кластеризации: {(end_time - start_time).total_seconds():.6f} сек")
+print(f"Пиковое использование памяти: {peak_mem / 1024:.2f} КБ")
