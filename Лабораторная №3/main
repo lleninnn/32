@@ -1,0 +1,176 @@
+import pandas as pd                     # чтение CSV-файлов
+import numpy as np                      # работа с массивами чисел
+from collections import Counter         # подсчёт голосов
+from sklearn.model_selection import train_test_split  # разделение данных
+from sklearn.neighbors import KNeighborsClassifier    # готовая k-NN модель
+from sklearn.metrics import accuracy_score            # вычисление точности
+import matplotlib.pyplot as plt         # построение графиков
+from visual import plot_data     # наша функция для рисования точек
+
+# 1. собственный классификатор k-NN
+class MyKNN:
+    """
+    классификатор k ближайших соседей
+    использует евклидово расстояние и голосование большинством
+    """
+
+    def __init__(self, k=3):
+        """
+        конструктор: запоминаем число соседей
+        k : int (по умолчанию 3)
+            количество соседей, участвующих в голосовании
+        """
+        self.k = k
+        # пока нет обучающих данных, они пусты
+        self.X_train = None
+        self.y_train = None
+
+    def fit(self, X_train, y_train):
+        """
+        обучает модель, просто запоминая тренировочные примеры
+        X_train : двумерный массив размером (n_объектов, n_признаков)
+        y_train : одномерный массив меток
+        """
+        # преобразуем в массивы для удобства вычислений
+        self.X_train = np.array(X_train)
+        self.y_train = np.array(y_train)
+
+    def predict(self, X_test):
+        """
+        предсказывает метки классов для новых объектов
+        X_test : двумерный массив признаков тестовых объектов
+        возвращает массив предсказанных меток.
+        """
+        X_test = np.array(X_test)
+        predictions = []                     # здесь будем накапливать предсказания
+        for i in range(len(X_test)):
+            x = X_test[i]                    # берём i-й тестовый объект
+            pred = self._predict_one(x)      # предсказываем для него
+            predictions.append(pred)
+        return np.array(predictions)         # возвращаем как массив
+
+    def _predict_one(self, x):
+        """
+        предсказание для одного объекта (вектора признаков x)
+        возвращает метку класса.
+        """
+        # считаем расстояния до всех тренировочных точек
+        distances = []                       # список для расстояний
+        for x_tr in self.X_train:            # проходим по всем тренировочным точкам
+            diff = x - x_tr                  # разность координат
+            squared = diff ** 2              # возводим в квадрат
+            sum_sq = np.sum(squared)         # сумма квадратов
+            d = np.sqrt(sum_sq)              # квадратный корень = евклидово расстояние
+            distances.append(d)              # добавляем в список
+
+        # находим индексы k ближайших соседей
+        # np.argsort возвращает индексы, упорядоченные по возрастанию расстояний
+        sorted_indices = np.argsort(distances)
+        k_indices = sorted_indices[:self.k]  # берём первые k
+
+        # получаем метки этих k соседей
+        k_labels = []                        # список для меток соседей
+        for idx in k_indices:
+            k_labels.append(self.y_train[idx])
+
+        # голосование
+        # Counter считает, сколько раз встретился каждый класс
+        # most_common(1) возвращает список с одним кортежем (метка, количество)
+        most_common = Counter(k_labels).most_common(1)[0][0]
+        return most_common
+
+# 2. загрузка данных из CSV
+def load_data(filepath):
+    # читаем CSV в DataFrame
+    df = pd.read_csv(filepath)
+    # выбираем столбцы 'сладость' и 'хруст' как признаки
+    X = df[['сладость', 'хруст']].values   # .values возвращает массив
+    # выбираем столбец 'класс' как целевую переменную
+    y = df['класс'].values
+    return X, y
+
+# 3. разделение данных на обучение и тест
+def split(X, y, test_size=0.3, random_state=42):
+    """
+    разделяет данные на обучающую и тестовую выборки
+    параметры:
+        test_size : доля данных, отводимых под тест (0.3 = 30%)
+        random_state : фиксирует случайное разбиение для воспроизводимости
+    возвращает:
+        X_train, X_test, y_train, y_test
+    """
+    return train_test_split(
+        X, y,
+        test_size=test_size,
+        random_state=random_state,
+        stratify=y           # сохраняет баланс классов в каждой части
+    )
+
+# 4. оценка качества модели
+def evaluate(model, X_test, y_test, name="модель"):
+    """
+    вычисляет и выводит точность (accuracy) модели
+    model - обученный классификатор с методом predict
+    X_test - признаки тестовых объектов
+    y_test - истинные метки тестовых объектов
+    name - название модели для сообщения
+    возвращает значение точности (долю правильных ответов)
+    """
+    # получаем предсказания модели на тестовых данных
+    y_pred = model.predict(X_test)
+    # сравниваем с истинными метками и считаем долю правильных
+    accuracy = accuracy_score(y_test, y_pred)
+    print(f"[{name}] Точность: {accuracy:.2%}")
+    return accuracy
+
+# 5. Запуск одного эксперимента
+def run_experiment(X, y, label=""):
+    """
+    1) разделяем данные,
+    2) обучаем собственный k-NN и sklearn k-NN,
+    3) выводим точность.
+    возвращаем обученные модели и тренировочную часть для визуализации
+    """
+    # разделяем данные
+    X_tr, X_te, y_tr, y_te = split(X, y)
+
+    # создаём и обучаем собственный классификатор
+    my_model = MyKNN(k=3)
+    my_model.fit(X_tr, y_tr)
+    # оцениваем точность
+    evaluate(my_model, X_te, y_te, f"MyKNN {label}")
+
+    # создаём и обучаем библиотечный классификатор sklearn
+    sk_model = KNeighborsClassifier(n_neighbors=3)
+    sk_model.fit(X_tr, y_tr)
+    # оцениваем точность
+    evaluate(sk_model, X_te, y_te, f"sklearn {label}")
+
+    # возвращаем модели и тренировочные данные для дальнейшего анализа
+    return my_model, sk_model, X_tr, y_tr
+
+# 6. Главная функция
+def main():
+    # исходный датасет
+    print("Исходный набор продуктов")
+    # загружаем данные из файла products.csv
+    X, y = load_data('products.csv')
+    # запускаем
+    my_knn, sk_knn, X_tr, y_tr = run_experiment(X, y, "(исходный)")
+
+    # визуализируем обучающую выборку
+    plt.figure(figsize=(6, 5))
+    plot_data(X_tr, y_tr, "Обучающая выборка (исходный датасет)")
+    plt.show()
+
+    # расширенный датасет
+    print("Расширенный набор продуктов")
+    X2, y2 = load_data('products_ex.csv')
+    my_knn2, sk_knn2, X_tr2, y_tr2 = run_experiment(X2, y2, "(расширенный)")
+
+    plt.figure(figsize=(6, 5))
+    plot_data(X_tr2, y_tr2, "Обучающая выборка (расширенный датасет)")
+    plt.show()
+
+if __name__ == "__main__":
+    main()
