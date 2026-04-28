@@ -6,18 +6,16 @@ def plot_data(X, y, title=''):
     X - массив признаков (N x 2)
     y - метки классов
     """
-    # преобразуем классы в числовые метки для раскраски
-    classes = sorted(set(y))
+    classes = sorted(set(y)) # получаем уникальные имена классов в алфавитном порядке
     # сопоставим каждому классу индекс
     y_num = [classes.index(label) for label in y]
 
     # рисуем точки, цвет задаётся по индексу класса (colormap 'viridis' – спокойная)
     scatter = plt.scatter(X[:, 0], X[:, 1], c=y_num, cmap='viridis',
                           edgecolor='k', s=70)
-    # создаём легенду: берём цвета из scatter и метки классов
-    handles = scatter.legend_elements()[0]
+    handles = scatter.legend_elements()[0] # автоматически извлекает цветные метки для легенды
     labels = classes
-    plt.legend(handles, labels)
+    plt.legend(handles, labels) # подписывает цвета настоящими названиями классов
     plt.xlabel('Сладость')
     plt.ylabel('Хруст')
     if title:
