@@ -6,6 +6,8 @@ from sklearn.neighbors import KNeighborsClassifier    # готовая k-NN мо
 from sklearn.metrics import accuracy_score            # вычисление точности
 import matplotlib.pyplot as plt         # построение графиков
 from visual import plot_data     # наша функция для рисования точек
+from datetime import datetime
+import tracemalloc
 
 # 1. собственный классификатор k-NN
 class MyKNN:
@@ -139,17 +141,37 @@ def run_experiment(X, y, label=""):
     my_model.fit(X_tr, y_tr)
     # оцениваем точность
     evaluate(my_model, X_te, y_te, f"MyKNN {label}")
+    benchmark_model(my_model, X_tr, y_tr, X_te, f"MyKNN {label}")
 
     # создаём и обучаем библиотечный классификатор sklearn
     sk_model = KNeighborsClassifier(n_neighbors=3)
     sk_model.fit(X_tr, y_tr)
     # оцениваем точность
     evaluate(sk_model, X_te, y_te, f"sklearn {label}")
+    benchmark_model(sk_model, X_tr, y_tr, X_te, f"sklearn {label}")
 
     # возвращаем модели и тренировочные данные для дальнейшего анализа
     return my_model, sk_model, X_tr, y_tr
 
-# 6. Главная функция
+# 6. Замеры по времени и памяти
+def benchmark_model(model, X_train, y_train, X_test, model_name):
+    """Замеряет общее время и пиковую память (fit + predict)."""
+    tracemalloc.clear_traces()
+    tracemalloc.start()
+    start = datetime.now()
+
+    model.fit(X_train, y_train)
+    model.predict(X_test)
+
+    end = datetime.now()
+    _, peak_mem = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    total_time = (end - start).total_seconds()
+    print(f"[{model_name}] Общее время: {total_time:.6f} сек, пиковая память: {peak_mem} байт")
+    return total_time, peak_mem
+
+# 7. Главная функция
 def main():
     # исходный датасет
     print("Исходный набор продуктов")
