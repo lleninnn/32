@@ -1,13 +1,13 @@
 import pandas as pd                     # чтение CSV-файлов
 import numpy as np                      # работа с массивами чисел
-from collections import Counter         # подсчёт голосов
-from sklearn.model_selection import train_test_split  # разделение данных
-from sklearn.neighbors import KNeighborsClassifier    # готовая k-NN модель
-from sklearn.metrics import accuracy_score            # вычисление точности
+from collections import Counter         # подсчёт голосов классов (самый частый)
+from sklearn.model_selection import train_test_split  # деление данных на обучение и тест
+from sklearn.neighbors import KNeighborsClassifier    # библиотечная k-NN модель
+from sklearn.metrics import accuracy_score            # точность
 import matplotlib.pyplot as plt         # построение графиков
-from visual import plot_data     # наша функция для рисования точек
-from datetime import datetime
-import tracemalloc
+from visual import plot_data     # моя функция визуализации
+from datetime import datetime # замер времени
+import tracemalloc # замер памяти
 
 # 1. собственный классификатор k-NN
 class MyKNN:
@@ -53,10 +53,10 @@ class MyKNN:
 
     def _predict_one(self, x):
         """
-        предсказание для одного объекта (вектора признаков x)
-        возвращает метку класса.
+        предсказание для одного объекта (вектора x)
+        возвращает метку класса
         """
-        # считаем расстояния до всех тренировочных точек
+        # считаем расстояния до всех точек
         distances = []                       # список для расстояний
         for x_tr in self.X_train:            # проходим по всем тренировочным точкам
             diff = x - x_tr                  # разность координат
@@ -83,8 +83,7 @@ class MyKNN:
 
 # 2. загрузка данных из CSV
 def load_data(filepath):
-    # читаем CSV в DataFrame
-    df = pd.read_csv(filepath)
+    df = pd.read_csv(filepath) # читаем CSV в DataFrame
     # выбираем столбцы 'сладость' и 'хруст' как признаки
     X = df[['сладость', 'хруст']].values   # .values возвращает массив
     # выбираем столбец 'класс' как целевую переменную
@@ -105,10 +104,10 @@ def split(X, y, test_size=0.3, random_state=42):
         X, y,
         test_size=test_size,
         random_state=random_state,
-        stratify=y           # сохраняет баланс классов в каждой части
+        stratify=y           # сохраняет пропорции классов в обуч. и тест. частях
     )
 
-# 4. оценка качества модели
+# 4. оценка точности модели
 def evaluate(model, X_test, y_test, name="модель"):
     """
     вычисляет и выводит точность (accuracy) модели
@@ -150,13 +149,13 @@ def run_experiment(X, y, label=""):
     evaluate(sk_model, X_te, y_te, f"sklearn {label}")
     benchmark_model(sk_model, X_tr, y_tr, X_te, f"sklearn {label}")
 
-    # возвращаем модели и тренировочные данные для дальнейшего анализа
+    # возвращаем уже обученные модели и тренировочные данные для визуализации
     return my_model, sk_model, X_tr, y_tr
 
 # 6. Замеры по времени и памяти
 def benchmark_model(model, X_train, y_train, X_test, model_name):
     """Замеряет общее время и пиковую память (fit + predict)."""
-    tracemalloc.clear_traces()
+    tracemalloc.clear_traces() # очищаем предыдущие записи о памяти
     tracemalloc.start()
     start = datetime.now()
 
@@ -164,10 +163,10 @@ def benchmark_model(model, X_train, y_train, X_test, model_name):
     model.predict(X_test)
 
     end = datetime.now()
-    _, peak_mem = tracemalloc.get_traced_memory()
+    _, peak_mem = tracemalloc.get_traced_memory() # берём пиковый объём памяти
     tracemalloc.stop()
 
-    total_time = (end - start).total_seconds()
+    total_time = (end - start).total_seconds() # в секундах
     print(f"[{model_name}] Общее время: {total_time:.6f} сек, пиковая память: {peak_mem} байт")
     return total_time, peak_mem
 
@@ -193,6 +192,11 @@ def main():
     plt.figure(figsize=(6, 5))
     plot_data(X_tr2, y_tr2, "Обучающая выборка (расширенный датасет)")
     plt.show()
+
+    # Добавление нового продукта с двумя признаками для проверки классификатора
+    new_product = np.array(([3,7]))
+    pred_class = my_knn.predict(new_product)
+    print(f"Продукт: {pred_class[0]}")
 
 if __name__ == "__main__":
     main()
