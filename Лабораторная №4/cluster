@@ -1,0 +1,81 @@
+import pandas as pd, numpy as np, matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_score, confusion_matrix
+
+# ----------------------------
+# 1. Загрузка и масштабирование
+# ----------------------------
+train = pd.read_csv('disease_train.csv')
+X = train.drop('Y', axis=1)          # признаки (7 медицинских показателей)
+y_true = train['Y']                  # истинные метки классов для сравнения
+X_scaled = StandardScaler().fit_transform(X)  # стандартизация (среднее 0, стд 1)
+
+# ----------------------------
+# 2. Метод локтя и автоматический выбор K
+# ----------------------------
+inertia = []                         # список для сохранения инерции
+K_range = range(2, 11)               # проверяем число кластеров от 2 до 10
+
+for k in K_range:
+    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10).fit(X_scaled)
+    inertia.append(kmeans.inertia_)  # инерция – сумма квадратов расстояний до центроидов
+
+# График локтя
+plt.figure(figsize=(6,4))
+plt.plot(K_range, inertia, 'bo-')
+plt.xlabel('Число кластеров K')
+plt.ylabel('Инерция')
+plt.title('Метод локтя')
+plt.grid(alpha=0.3)
+plt.show()
+
+# Автоматический выбор K – точка перегиба по минимальной первой разности инерции
+k_opt = K_range[np.argmin(np.diff(inertia)) + 1]
+print(f'Оптимальное K: {k_opt}')
+
+# ----------------------------
+# 3. Кластеризация с оптимальным K
+# ----------------------------
+kmeans = KMeans(n_clusters=k_opt, random_state=42, n_init=10)
+clusters = kmeans.fit_predict(X_scaled)   # метки кластеров для каждого объекта
+
+# ----------------------------
+# 4. Оценка качества и анализ кластеров
+# ----------------------------
+# Статистика по каждому кластеру
+for i in range(k_opt):
+    data = train[clusters == i]          # выбираем объекты одного кластера
+    if len(data) > 0:
+        print(f'\nКластер {i+1}:')
+        print(f'  Число объектов: {len(data)}')
+        print(f'  Доля класса 1 (болен): {data["Y"].mean():.1%}')
+        print(f'  Средние значения признаков:')
+        print(data[['X1','X2','X3','X4','X5','X6','X7']].mean())
+
+# Коэффициент силуэта – мера компактности и разделимости кластеров
+sil = silhouette_score(X_scaled, clusters)
+print(f'\nКоэффициент силуэта: {sil:.3f}')
+
+# Матрица сопоставления кластеров с истинными метками
+print('\nМатрица сопоставления кластеров и истинных меток:')
+print(confusion_matrix(y_true, clusters))
+
+# ----------------------------
+# 5. Визуализация в PCA-пространстве
+# ----------------------------
+pca = PCA(n_components=2)                # сокращаем размерность до 2 главных компонент
+X_pca = pca.fit_transform(X_scaled)
+
+plt.figure(figsize=(12,5))
+# Левый график – объекты, раскрашенные по кластерам
+plt.subplot(1,2,1)
+plt.scatter(X_pca[:,0], X_pca[:,1], c=clusters, cmap='viridis', alpha=0.6)
+plt.title(f'KMeans (K={k_opt})')
+# Правый график – объекты, раскрашенные по истинным меткам
+plt.subplot(1,2,2)
+plt.scatter(X_pca[:,0], X_pca[:,1], c=y_true, cmap='coolwarm', alpha=0.6)
+plt.title('Истинные метки')
+plt.tight_layout()
+plt.show()
