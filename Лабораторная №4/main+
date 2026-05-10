@@ -1,0 +1,144 @@
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import Perceptron
+from sklearn.ensemble import VotingClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.model_selection import cross_val_score
+from sklearn.metrics import accuracy_score
+import matplotlib.pyplot as plt
+
+# ----------------------------
+# 1. Загрузка данных
+# ----------------------------
+train = pd.read_csv('disease_train.csv')        # тренировочный набор с метками Y
+test  = pd.read_csv('disease_public_test.csv')   # тестовый набор без меток
+sub   = pd.read_csv('disease_sample_submission.csv')  # эталонные ответы для test
+
+# Вывод распределения классов в обучающей выборке
+print("Распределение классов в тренировочном наборе:")
+print(train['Y'].value_counts(normalize=True))
+
+# Разделение на признаки (X) и целевую переменную (y)
+X_train = train.drop('Y', axis=1)
+y_train = train['Y']
+X_test  = test
+y_test  = sub['Y']   # истинные метки тестового набора из sample_submission
+
+# ----------------------------
+# 2. Масштабирование признаков
+# ----------------------------
+scaler = StandardScaler()
+X_train_sc = scaler.fit_transform(X_train)   # обучаем scaler на train и масштабируем train
+X_test_sc  = scaler.transform(X_test)        # масштабируем test тем же scaler
+
+# ----------------------------
+# 3. Подбор оптимальной скорости обучения (eta) для перцептрона
+# ----------------------------
+best_acc = 0.0
+best_eta = 0.1
+# Перебираем несколько значений eta
+for eta in [0.001, 0.01, 0.1, 0.5]:
+    # Временная модель с заданным eta
+    per_tmp = Perceptron(max_iter=1000, eta0=eta, random_state=42)
+    # Оцениваем качество 5-фолдовой кросс-валидацией на train
+    scores = cross_val_score(per_tmp, X_train_sc, y_train, cv=5, scoring='accuracy')
+    if scores.mean() > best_acc:
+        best_acc = scores.mean()
+        best_eta = eta
+
+print(f"\nЛучшая eta для перцептрона: {best_eta} (CV accuracy: {best_acc:.4f})")
+
+# ----------------------------
+# 4. Создание моделей с подобранными параметрами
+# ----------------------------
+# Перцептрон с лучшим eta
+perceptron = Perceptron(max_iter=1000, eta0=best_eta, random_state=42)
+
+# VotingClassifier (ансамбль из логистической регрессии, дерева решений и kNN)
+voting = VotingClassifier(
+    estimators=[
+        ('lr', LogisticRegression(max_iter=1000, random_state=42)),
+        ('dt', DecisionTreeClassifier(random_state=42)),
+        ('knn', KNeighborsClassifier())
+    ],
+    voting='hard'   # жёсткое голосование (по большинству)
+)
+
+# ----------------------------
+# 5. Кросс-валидация на тренировочных данных
+# ----------------------------
+print("\nВыполнение 5-фолдовой кросс-валидации на тренировочном наборе...")
+cv_per = cross_val_score(perceptron, X_train_sc, y_train, cv=5, scoring='accuracy')
+cv_vot = cross_val_score(voting, X_train_sc, y_train, cv=5, scoring='accuracy')
+
+print("\nТочность на TRAIN (5-фолдов кросс-валидация):")
+print(f"Perceptron:       {cv_per.mean():.4f} ± {cv_per.std():.4f}")
+print(f"VotingClassifier: {cv_vot.mean():.4f} ± {cv_vot.std():.4f}")
+
+# ----------------------------
+# 6. Обучение моделей на полном тренировочном наборе
+# ----------------------------
+perceptron.fit(X_train_sc, y_train)
+voting.fit(X_train_sc, y_train)
+
+# Прогнозирование на тестовой выборке
+pred_per = perceptron.predict(X_test_sc)
+pred_vot = voting.predict(X_test_sc)
+
+# ----------------------------
+# 7. Оценка точности на тестовом наборе
+# ----------------------------
+acc_per_test = accuracy_score(y_test, pred_per)
+acc_vot_test = accuracy_score(y_test, pred_vot)
+
+print("\nТочность на TEST (сравнение с sample_submission):")
+print(f"Perceptron:       {acc_per_test:.4f}")
+print(f"VotingClassifier: {acc_vot_test:.4f}")
+
+# ----------------------------
+# 8. Сводная таблица результатов
+# ----------------------------
+print("\nСводное сравнение моделей:")
+print(f"{'Модель':<20} {'Train (CV)':<15} {'Test':<10}")
+print("-" * 45)
+print(f"{'Perceptron':<20} {cv_per.mean():<15.4f} {acc_per_test:<10.4f}")
+print(f"{'Voting':<20} {cv_vot.mean():<15.4f} {acc_vot_test:<10.4f}")
+
+# ----------------------------
+# 9. Визуализация результатов
+# ----------------------------
+labels = ['Perceptron', 'Voting']
+train_acc = [cv_per.mean(), cv_vot.mean()]
+test_acc  = [acc_per_test, acc_vot_test]
+
+x = np.arange(len(labels))
+width = 0.35
+
+fig, ax = plt.subplots(figsize=(8, 6))
+rects1 = ax.bar(x - width/2, train_acc, width, label='Train (CV) Accuracy', color='steelblue')
+rects2 = ax.bar(x + width/2, test_acc, width, label='Test Accuracy', color='lightcoral')
+
+ax.set_ylabel('Accuracy')
+ax.set_title('Сравнение точности классификаторов')
+ax.set_xticks(x)
+ax.set_xticklabels(labels)
+ax.legend()
+ax.set_ylim(0, 1.1)
+
+# Функция для подписи значений над столбцами
+def autolabel(rects):
+    for rect in rects:
+        height = rect.get_height()
+        ax.annotate(f'{height:.3f}',
+                    xy=(rect.get_x() + rect.get_width() / 2, height),
+                    xytext=(0, 3), textcoords="offset points",
+                    ha='center', va='bottom')
+
+autolabel(rects1)
+autolabel(rects2)
+
+plt.tight_layout()
+plt.show()
