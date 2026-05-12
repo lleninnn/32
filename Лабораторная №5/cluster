@@ -1,0 +1,83 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_score
+
+# 1. Загрузка и подготовка данных
+df = pd.read_csv('flats-utf.csv', encoding='utf-8-sig')
+# Для кластеризации целевая переменная не нужна, позже используем для анализа.
+X = df.drop(columns=['price'])
+
+# Кодируем категориальный признак в числа (иначе KMeans не работает)
+X = pd.get_dummies(X, columns=['wallsMaterial'], drop_first=True)
+
+# Масштабирование – обязательно для KMeans
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# 2. Метод локтя и автоматический выбор K
+inertia = []
+K_range = range(2, 11)
+
+for k in K_range:
+    km = KMeans(n_clusters=k, random_state=42, n_init=10)
+    km.fit(X_scaled)
+    inertia.append(km.inertia_)
+
+plt.figure(figsize=(6,4))
+plt.plot(K_range, inertia, 'bo-')
+plt.xlabel('Число кластеров K')
+plt.ylabel('Инерция')
+plt.title('Метод локтя')
+plt.grid(alpha=0.3)
+plt.show()
+
+# Автоматический выбор K – точка перегиба по первой разности инерции
+k_opt = K_range[np.argmin(np.diff(inertia)) + 1]
+print(f'Оптимальное K (автоматически): {k_opt}')
+
+# 3. Кластеризация с оптимальным K
+kmeans = KMeans(n_clusters=k_opt, random_state=42, n_init=10)
+clusters = kmeans.fit_predict(X_scaled)
+df['cluster'] = clusters
+
+# 4. Анализ кластеров (средние по признакам и цене)
+print("\n=== Характеристики кластеров ===")
+for i in range(k_opt):
+    data = df[df['cluster'] == i]
+    if len(data) > 0:
+        print(f'\nКластер {i+1}:')
+        print(f'  Число квартир: {len(data)}')
+        print(f'  Средняя цена: {data["price"].mean():,.0f} руб.')
+        print(f'  Средняя общая площадь: {data["totalArea"].mean():.1f} кв.м')
+        print(f'  Средний номер этажа: {data["floorNumber"].mean():.1f}')
+        print(f'  Средняя высота дома: {data["floorsTotal"].mean():.1f} эт.')
+        print(f'  Преобладающий материал стен: {data["wallsMaterial"].mode()[0] if len(data["wallsMaterial"].mode())>0 else "—"}')
+
+# Коэффициент силуэта – мера качества кластеризации
+sil = silhouette_score(X_scaled, clusters)
+print(f'\nКоэффициент силуэта: {sil:.3f}')
+
+# 5. Визуализация в PCA-пространстве
+pca = PCA(n_components=2)
+X_pca = pca.fit_transform(X_scaled)
+
+plt.figure(figsize=(12,5))
+# Левый график – кластеры
+plt.subplot(1,2,1)
+plt.scatter(X_pca[:,0], X_pca[:,1], c=clusters, cmap='viridis', alpha=0.6)
+plt.title(f'Кластеризация квартир (K={k_opt})')
+plt.xlabel('PC1')
+plt.ylabel('PC2')
+# Правый график – окраска по цене (для сравнения)
+plt.subplot(1,2,2)
+sc = plt.scatter(X_pca[:,0], X_pca[:,1], c=df['price'], cmap='coolwarm', alpha=0.6)
+plt.title('Распределение реальной цены')
+plt.xlabel('PC1')
+plt.ylabel('PC2')
+plt.colorbar(sc, label='Цена, руб.')
+plt.tight_layout()
+plt.show()
