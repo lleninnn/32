@@ -1,0 +1,107 @@
+# Импорт необходимых библиотек
+import pandas as pd                # для работы с табличными данными
+import matplotlib.pyplot as plt    # для построения графиков
+from sklearn.model_selection import train_test_split, KFold, cross_val_score
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.linear_model import Lars
+from sklearn.dummy import DummyRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+# 1. ЗАГРУЗКА ДАННЫХ
+# Чтение CSV-файла с квартирами. Указана правильная кодировка UTF-8 с BOM.
+df = pd.read_csv('flats-utf.csv', encoding='utf-8-sig')
+
+# 2. ОПРЕДЕЛЕНИЕ ЦЕЛЕВОЙ ПЕРЕМЕННОЙ И ПРИЗНАКОВ
+target = 'price'                   # столбец, который будем предсказывать (цена)
+X = df.drop(columns=[target])     # все столбцы, кроме цены – признаки
+y = df[target]                     # целевая переменная
+
+# Обоснование: цена квартиры зависит от материала стен,
+# этажа, общей и кухонной площади, а также от местоположения (координаты).
+
+# 3. ПРЕДОБРАБОТКА ДАННЫХ
+# Указываем категориальный признак (текстовый) и числовые признаки.
+cat_feature = 'wallsMaterial'
+num_features = [
+    'floorNumber', 'floorsTotal', 'totalArea',
+    'kitchenArea', 'latitude', 'longitude'
+]
+
+# Создаём преобразователь (ColumnTransformer), который применяет разные операции к разным группам столбцов:
+# - для числовых: StandardScaler – центрирование и масштабирование (среднее=0, дисперсия=1)
+# - для категориального: OneHotEncoder с drop='first' (убираем первый уровень, чтобы избежать мультиколлинеарности)
+preprocessor = ColumnTransformer([
+    ('num', StandardScaler(), num_features),
+    ('cat', OneHotEncoder(drop='first', handle_unknown='ignore'), [cat_feature])
+])
+
+# Применяем предобработку ко всем данным. Результат – матрица X_processed.
+X_processed = preprocessor.fit_transform(X)
+
+# 4. ОБУЧЕНИЕ И ОЦЕНКА НА ОЧИЩЕННЫХ ДАННЫХ
+# Словарь моделей: Lars (основной алгоритм регрессии) и Dummy (базовая линия).
+models = {
+    'Lars': Lars(),
+    'Dummy': DummyRegressor(strategy='mean')  # предсказывает среднее значение цены из обучающей выборки
+}
+
+# Обычное разбиение на обучающую и тестовую выборки
+X_train, X_test, y_train, y_test = train_test_split(
+    X_processed, y, test_size=0.3, random_state=42   # random_state для воспроизводимости
+)
+
+# Словарь для хранения метрик на train/test split
+results_split = {}
+
+# Проходим по каждой модели, обучаем на обучающем наборе, предсказываем на тестовом,
+# вычисляем MAE, MSE, R2.
+for name, model in models.items():
+    model.fit(X_train, y_train)                      # обучение
+    y_pred = model.predict(X_test)                   # предсказание
+    results_split[name] = {
+        'MAE': mean_absolute_error(y_test, y_pred),
+        'MSE': mean_squared_error(y_test, y_pred),
+        'R2': r2_score(y_test, y_pred)
+    }
+
+# Кросс-валидация (5-fold) – другой способ оценки устойчивости модели
+# Создаём генератор разбиений KFold (перемешивание включено)
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+# Словарь для хранения средних метрик по всем фолдам
+results_cv = {}
+
+for name, model in models.items():
+    # cross_val_score возвращает массив из 5 значений (по одному на фолд)
+    # scoring='neg_mean_absolute_error' – отрицательная MAE, т.к. в scikit-learn "чем больше, тем лучше".
+    # Берём минус, получаем обычную MAE.
+    mae_scores = -cross_val_score(model, X_processed, y, cv=kf, scoring='neg_mean_absolute_error')
+    r2_scores = cross_val_score(model, X_processed, y, cv=kf, scoring='r2')
+    results_cv[name] = {
+        'MAE_mean': mae_scores.mean(), 'MAE_std': mae_scores.std(),
+        'R2_mean': r2_scores.mean(), 'R2_std': r2_scores.std()
+    }
+
+# 5. ВЫВОД РЕЗУЛЬТАТОВ И ГРАФИКОВ
+print("=== Результаты (train/test split) ===")
+for name, m in results_split.items():
+    print(f"{name:10} | MAE={m['MAE']:8.2f} | MSE={m['MSE']:12.2f} | R2={m['R2']:.4f}")
+
+print("\n=== Результаты (5-fold CV) ===")
+for name, m in results_cv.items():
+    print(f"{name:10} | MAE={m['MAE_mean']:8.2f} ± {m['MAE_std']:.2f} | R2={m['R2_mean']:.4f} ± {m['R2_std']:.4f}")
+
+# График: сопоставление реальных и предсказанных цен для модели Lars на тестовой выборке.
+best_model = Lars().fit(X_train, y_train)        # переобучаем Lars
+y_pred_lars = best_model.predict(X_test)
+
+plt.figure(figsize=(6, 6))
+plt.scatter(y_test, y_pred_lars, alpha=0.5)      # точки – пары (реальная, предсказанная)
+# Красная пунктирная линия – идеальное предсказание (y_pred = y_test)
+plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--')
+plt.xlabel('Реальная цена (руб.)')
+plt.ylabel('Предсказанная цена (руб.)')
+plt.title('Lars: предсказание vs реальность (очищенные данные)')
+plt.grid(True, alpha=0.3)
+plt.show()
