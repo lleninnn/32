@@ -1,0 +1,23 @@
+# settings.py
+# Глобальные настройки игры: размеры окна, цвета, пути, глубина AI и т.д.
+
+import os
+
+BOARD_SIZE = 8           # размер доски (8x8)
+AI_DEPTH = 3             # глубина поиска для минимакса (в режиме игры)
+FPS = 60                 # частота кадров
+FULLSCREEN = False       # полноэкранный режим (True/False)
+ASSETS_PATH = os.path.join(os.path.dirname(__file__), 'assets')   # папка с изображениями
+
+# Цвета в формате RGB
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+GRAY = (128, 128, 128)
+BLUE = (0, 0, 255)
+GREEN = (0, 255, 0)
+RED = (255, 0, 0)
+
+# Размеры окна (могут быть изменены при FULLSCREEN = True)
+WINDOW_WIDTH = 800
+WINDOW_HEIGHT = 800
+CELL_SIZE = 100          # размер клетки в пикселях
