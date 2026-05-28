@@ -1,0 +1,620 @@
+# game.py
+# Реализация шахматных правил, генерация ходов, проверка шаха/мата/пата, сохранение/загрузка, отрисовка.
+
+import pygame
+import settings
+from settings import *
+from copy import deepcopy
+from datetime import datetime
+from database import update_game, get_game_by_id
+import json
+
+class Move:
+    """
+    Представляет один шахматный ход.
+    Хранит: начальную и конечную клетку, какую фигуру передвинули, какую взяли,
+    флаг превращения пешки и выбранную фигуру при превращении.
+    """
+
+    def __init__(self, start_pos, end_pos, piece_moved, piece_captured,
+                 is_pawn_promotion=False, promotion_choice='Q'):
+        """
+        start_pos, end_pos – кортежи (row, col).
+        piece_moved – строка типа 'wP', 'bK'.
+        piece_captured – строка типа '--' или 'bP'.
+        is_pawn_promotion – True для хода превращения пешки.
+        promotion_choice – 'Q', 'R', 'B', 'N'.
+        """
+        self.start_row, self.start_col = start_pos
+        self.end_row, self.end_col = end_pos
+        self.piece_moved = piece_moved
+        self.piece_captured = piece_captured
+        self.is_pawn_promotion = is_pawn_promotion
+        self.promotion_choice = promotion_choice
+
+    def __eq__(self, other):
+        """Сравнивает два хода по всем атрибутам."""
+        if not isinstance(other, Move):
+            return False
+        return (self.start_row == other.start_row and
+                self.start_col == other.start_col and
+                self.end_row == other.end_row and
+                self.end_col == other.end_col and
+                self.piece_moved == other.piece_moved and
+                self.piece_captured == other.piece_captured and
+                self.is_pawn_promotion == other.is_pawn_promotion and
+                self.promotion_choice == other.promotion_choice)
+
+    def get_chess_notation(self):
+        """Возвращает строку вида 'e2e4' (алгебраическая нотация без учёта фигур)."""
+        cols = {0: 'a', 1: 'b', 2: 'c', 3: 'd', 4: 'e', 5: 'f', 6: 'g', 7: 'h'}
+        return (cols[self.start_col] + str(8 - self.start_row) +
+                cols[self.end_col] + str(8 - self.end_row))
+
+    def to_dict(self):
+        """Преобразует ход в словарь для сериализации в JSON."""
+        return {
+            'start_pos': [self.start_row, self.start_col],
+            'end_pos': [self.end_row, self.end_col],
+            'piece_moved': self.piece_moved,
+            'piece_captured': self.piece_captured,
+            'is_pawn_promotion': self.is_pawn_promotion,
+            'promotion_choice': self.promotion_choice
+        }
+
+    @classmethod
+    def from_dict(cls, move_dict):
+        """Создаёт объект Move из словаря (восстановление из JSON)."""
+        return cls(
+            start_pos=tuple(move_dict['start_pos']),
+            end_pos=tuple(move_dict['end_pos']),
+            piece_moved=move_dict['piece_moved'],
+            piece_captured=move_dict['piece_captured'],
+            is_pawn_promotion=move_dict['is_pawn_promotion'],
+            promotion_choice=move_dict.get('promotion_choice', 'Q')
+        )
+
+
+class Game:
+    """
+    Управляет состоянием шахматной партии: доска, очередь хода, история ходов,
+    проверка окончания (мат/пат), сохранение/загрузка из БД, отрисовка через PyGame.
+    """
+
+    def __init__(self, white_player='White', black_player='AI', game_id=None):
+        """
+        white_player, black_player – имена игроков (строки).
+        game_id – если не None, загружаем игру из БД.
+        """
+        self.white_player = white_player
+        self.black_player = black_player
+        self.game_id = game_id
+
+        if game_id:
+            self.load_game(game_id)                 # загружаем существующую партию
+        else:
+            # Новая партия – начальная позиция (короли + по одной пешке)
+            self.board = self.create_initial_board()
+            self.white_to_move = True               # белые начинают
+            self.move_log = []                      # список объектов Move
+            self.selected_square = None             # выбранная клетка (для GUI)
+            self.valid_moves = []                   # допустимые ходы для выбранной фигуры
+            self.checkmate = False
+            self.stalemate = False
+            self.en_passant_possible = ()           # не используется в эндшпиле
+            self.promotion_choice = 'Q'             # по умолчанию ферзь
+            self.start_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            self.end_time = None
+            self.result = None
+
+    def create_initial_board(self):
+        """Создаёт начальную доску для эндшпиля: белый король на e1, белая пешка на a2;
+           чёрный король на e8, чёрная пешка на h7."""
+        board = [['--' for _ in range(8)] for _ in range(8)]
+        # Белые
+        board[7][4] = 'wK'      # король белых (e1)
+        board[6][0] = 'wP'      # пешка белых (a2)
+        # Чёрные
+        board[0][4] = 'bK'      # король чёрных (e8)
+        board[1][7] = 'bP'      # пешка чёрных (h7)
+        return board
+
+    def load_game(self, game_id):
+        """Загружает партию из БД и восстанавливает доску по истории ходов."""
+        game = get_game_by_id(game_id)
+        if not game:
+            print(f"Игра с ID {game_id} не найдена, создаём новую.")
+            self.__init__(white_player=self.white_player, black_player=self.black_player)
+            return
+        # Распаковываем кортеж из БД
+        (_, self.white_player, self.black_player, moves_json,
+         self.result, self.start_time, self.end_time, status) = game
+        # Восстанавливаем список ходов из JSON
+        self.move_log = [Move.from_dict(m) for m in json.loads(moves_json)]
+        self.reconstruct_board()                    # восстанавливаем доску
+        # Флаги мата/пата определяем по результату и статусу
+        self.checkmate = (status == 'completed' and
+                          self.result and 'checkmate' in self.result.lower())
+        self.stalemate = (status == 'completed' and
+                          (self.result and 'stalemate' in self.result.lower()))
+        # Очерёдность хода: чётное количество ходов – ход белых, нечётное – чёрных
+        self.white_to_move = (len(self.move_log) % 2 == 0)
+
+    def reconstruct_board(self):
+        """Переигрывает все ходы из move_log, чтобы получить текущую доску."""
+        self.board = self.create_initial_board()
+        for move in self.move_log:
+            # Перемещаем фигуру на доске
+            self.board[move.start_row][move.start_col] = '--'
+            self.board[move.end_row][move.end_col] = move.piece_moved
+            # Если ход превращения, заменяем пешку на выбранную фигуру
+            if move.is_pawn_promotion:
+                self.board[move.end_row][move.end_col] = move.piece_moved[0] + move.promotion_choice
+
+    def make_move(self, move, update_state=True):
+        """
+        Применяет ход к доске, добавляет в историю.
+        Если update_state=True, вызывает проверку состояния (шах/мат/пат) и сохраняет в БД.
+        """
+        # Перемещаем фигуру
+        self.board[move.start_row][move.start_col] = '--'
+        self.board[move.end_row][move.end_col] = move.piece_moved
+        self.move_log.append(move)
+        self.white_to_move = not self.white_to_move   # меняем очередь хода
+
+        # Обработка превращения пешки (заменяем пешку на выбранную фигуру)
+        if move.is_pawn_promotion:
+            choice = move.promotion_choice if move.promotion_choice else 'Q'
+            self.board[move.end_row][move.end_col] = move.piece_moved[0] + choice
+
+        if update_state:
+            self.check_game_state()      # проверяем, не закончилась ли игра
+            self.save_current_game()     # сохраняем текущее состояние в БД
+
+    def undo_move(self, update_state=True):
+        """
+        Отменяет последний ход (используется при проверке легальности и в минимаксе).
+        Если update_state=True, обновляет состояние и сохраняет в БД.
+        """
+        if self.move_log:
+            move = self.move_log.pop()
+            # Возвращаем фигуры на исходные места
+            self.board[move.start_row][move.start_col] = move.piece_moved
+            self.board[move.end_row][move.end_col] = move.piece_captured
+            self.white_to_move = not self.white_to_move
+            if update_state:
+                self.check_game_state()
+                self.save_current_game()
+
+    def get_valid_moves(self):
+        """
+        Возвращает все легальные ходы для текущего игрока (с учётом шаха своему королю).
+        Ускоренная версия: ход применяется, проверяется шах, затем откатывается (без deepcopy).
+        """
+        moves = self.get_all_possible_moves()    # псевдолегальные ходы
+        valid_moves = []
+        current_color = self.white_to_move       # чей ход сейчас
+        for move in moves:
+            self.make_move(move, update_state=False)      # временно делаем ход
+            if not self.in_check(current_color):          # свой король не под шахом?
+                valid_moves.append(move)                  # ход легальный
+            self.undo_move(update_state=False)            # откатываем
+        return valid_moves
+
+    def get_all_possible_moves(self):
+        """
+        Возвращает все псевдолегальные ходы (без проверки шаха).
+        Перебирает все клетки, находит фигуры текущего игрока и генерирует для них ходы.
+        """
+        moves = []
+        for r in range(8):
+            for c in range(8):
+                piece = self.board[r][c]
+                if piece == '--':
+                    continue
+                # Проверяем, соответствует ли цвет фигуры очереди хода
+                if (self.white_to_move and piece[0] != 'w') or (not self.white_to_move and piece[0] != 'b'):
+                    continue
+                piece_type = piece[1]
+                if piece_type == 'K':
+                    self.get_king_moves(r, c, moves)
+                elif piece_type == 'P':
+                    self.get_pawn_moves(r, c, moves)
+                elif piece_type == 'Q':
+                    self.get_queen_moves(r, c, moves)
+                elif piece_type == 'R':
+                    self.get_rook_moves(r, c, moves)
+                elif piece_type == 'B':
+                    self.get_bishop_moves(r, c, moves)
+                elif piece_type == 'N':
+                    self.get_knight_moves(r, c, moves)
+        return moves
+
+    # ------------------- Генерация ходов для отдельных фигур -------------------
+
+    def get_pawn_moves(self, r, c, moves):
+        """
+        Генерирует все возможные ходы (включая превращение) для пешки на позиции (r,c).
+        Добавляет объекты Move в список moves.
+        """
+        piece = self.board[r][c]
+        direction = -1 if piece[0] == 'w' else 1   # белые идут вверх (уменьшение ряда), чёрные вниз
+        start_row = 6 if piece[0] == 'w' else 1    # начальный ряд для двойного хода
+        enemy_color = 'b' if piece[0] == 'w' else 'w'
+
+        # Ход на одну клетку вперёд
+        if 0 <= r + direction < 8 and self.board[r + direction][c] == '--':
+            # Если пешка достигает последнего ряда – добавляем все варианты превращения
+            if (piece[0] == 'w' and r + direction == 0) or (piece[0] == 'b' and r + direction == 7):
+                for choice in ['Q', 'R', 'B', 'N']:
+                    moves.append(Move((r, c), (r + direction, c), piece, '--',
+                                      is_pawn_promotion=True, promotion_choice=choice))
+            else:
+                moves.append(Move((r, c), (r + direction, c), piece, '--'))
+
+            # Двойной ход из начальной позиции (проверяем, что обе клетки пусты)
+            if (r == start_row and
+                self.board[r + direction][c] == '--' and
+                self.board[r + 2 * direction][c] == '--'):
+                moves.append(Move((r, c), (r + 2 * direction, c), piece, '--'))
+
+        # Взятие по диагонали
+        for dc in (-1, 1):
+            nr, nc = r + direction, c + dc
+            if 0 <= nr < 8 and 0 <= nc < 8:
+                target = self.board[nr][nc]
+                if target != '--' and target[0] == enemy_color:
+                    # Если пешка достигает последнего ряда при взятии – также превращение
+                    if (piece[0] == 'w' and nr == 0) or (piece[0] == 'b' and nr == 7):
+                        for choice in ['Q', 'R', 'B', 'N']:
+                            moves.append(Move((r, c), (nr, nc), piece, target,
+                                              is_pawn_promotion=True, promotion_choice=choice))
+                    else:
+                        moves.append(Move((r, c), (nr, nc), piece, target))
+
+    def get_king_moves(self, r, c, moves):
+        """
+        Генерирует ходы короля (без рокировки – в эндшпиле она не нужна).
+        Учитывает атаку пешек и другие атаки на конечную клетку.
+        """
+        ally_color = 'w' if self.white_to_move else 'b'
+        enemy_color = 'b' if ally_color == 'w' else 'w'
+        for dr in (-1, 0, 1):
+            for dc in (-1, 0, 1):
+                if dr == 0 and dc == 0:
+                    continue
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < 8 and 0 <= nc < 8:
+                    target = self.board[nr][nc]
+                    # Король не может ходить на клетку, занятую своей фигурой,
+                    # атакованную пешкой противника или находящуюся под ударом других фигур
+                    if (target == '--' or target[0] != ally_color) and \
+                       not self.is_attacked_by_pawn(nr, nc, enemy_color) and \
+                       not self.is_square_under_attack(nr, nc, ally_color):
+                        moves.append(Move((r, c), (nr, nc), self.board[r][c], target))
+
+    def is_attacked_by_pawn(self, row, col, enemy_color):
+        """
+        Проверяет, атакована ли клетка (row, col) пешкой цвета enemy_color.
+        Для белых пешек направление атаки – вверх (уменьшение ряда), для чёрных – вниз.
+        """
+        if enemy_color == 'w':
+            direction = 1      # белая пешка находится ниже атакуемой клетки
+        else:
+            direction = -1     # чёрная пешка находится выше
+        for dc in (-1, 1):
+            r = row + direction
+            c = col + dc
+            if 0 <= r < 8 and 0 <= c < 8:
+                if self.board[r][c] == f"{enemy_color}P":
+                    return True
+        return False
+
+    def get_queen_moves(self, r, c, moves):
+        """Генерирует ходы ферзя как комбинацию ладьи и слона."""
+        self.get_rook_moves(r, c, moves)
+        self.get_bishop_moves(r, c, moves)
+
+    def get_rook_moves(self, r, c, moves):
+        """Генерирует ходы ладьи по горизонтали и вертикали."""
+        ally = 'w' if self.white_to_move else 'b'
+        for dr, dc in ((1,0), (-1,0), (0,1), (0,-1)):
+            nr, nc = r + dr, c + dc
+            while 0 <= nr < 8 and 0 <= nc < 8:
+                target = self.board[nr][nc]
+                if target == '--':
+                    moves.append(Move((r, c), (nr, nc), self.board[r][c], target))
+                else:
+                    if target[0] != ally:
+                        moves.append(Move((r, c), (nr, nc), self.board[r][c], target))
+                    break
+                nr += dr
+                nc += dc
+
+    def get_bishop_moves(self, r, c, moves):
+        """Генерирует ходы слона по диагоналям."""
+        ally = 'w' if self.white_to_move else 'b'
+        for dr, dc in ((1,1), (1,-1), (-1,1), (-1,-1)):
+            nr, nc = r + dr, c + dc
+            while 0 <= nr < 8 and 0 <= nc < 8:
+                target = self.board[nr][nc]
+                if target == '--':
+                    moves.append(Move((r, c), (nr, nc), self.board[r][c], target))
+                else:
+                    if target[0] != ally:
+                        moves.append(Move((r, c), (nr, nc), self.board[r][c], target))
+                    break
+                nr += dr
+                nc += dc
+
+    def get_knight_moves(self, r, c, moves):
+        """Генерирует ходы коня (прыжки L-образной формы)."""
+        ally = 'w' if self.white_to_move else 'b'
+        jumps = [(-2,-1), (-1,-2), (-2,1), (-1,2), (1,-2), (2,-1), (1,2), (2,1)]
+        for dr, dc in jumps:
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < 8 and 0 <= nc < 8:
+                target = self.board[nr][nc]
+                # Проверяем, что клетка не занята своей фигурой и что после хода король не под шахом
+                if (target == '--' or target[0] != ally) and \
+                   not self.is_square_under_attack(nr, nc, ally):
+                    moves.append(Move((r, c), (nr, nc), self.board[r][c], target))
+
+    # ------------------- Проверка атак и шаха -------------------
+
+    def is_square_under_attack(self, row, col, ally_color):
+        """
+        Проверяет, атакована ли клетка (row, col) какой-либо фигурой противника.
+        ally_color – цвет союзных фигур ('w' или 'b').
+        """
+        enemy = 'b' if ally_color == 'w' else 'w'
+
+        # Пешки (белые бьют вверх, чёрные вниз)
+        if enemy == 'w':
+            dir_pawn = 1
+        else:
+            dir_pawn = -1
+        for dc in (-1, 1):
+            r, c = row + dir_pawn, col + dc
+            if 0 <= r < 8 and 0 <= c < 8 and self.board[r][c] == f"{enemy}P":
+                return True
+
+        # Кони
+        for dr, dc in [(-2,-1), (-1,-2), (-2,1), (-1,2), (1,-2), (2,-1), (1,2), (2,1)]:
+            r, c = row + dr, col + dc
+            if 0 <= r < 8 and 0 <= c < 8 and self.board[r][c] == f"{enemy}N":
+                return True
+
+        # Ладьи и ферзи по горизонтали/вертикали
+        for dr, dc in ((1,0), (-1,0), (0,1), (0,-1)):
+            r, c = row + dr, col + dc
+            while 0 <= r < 8 and 0 <= c < 8:
+                p = self.board[r][c]
+                if p == '--':
+                    r += dr
+                    c += dc
+                    continue
+                if p[0] == enemy and p[1] in ('R', 'Q'):
+                    return True
+                break
+
+        # Слоны и ферзи по диагоналям
+        for dr, dc in ((1,1), (1,-1), (-1,1), (-1,-1)):
+            r, c = row + dr, col + dc
+            while 0 <= r < 8 and 0 <= c < 8:
+                p = self.board[r][c]
+                if p == '--':
+                    r += dr
+                    c += dc
+                    continue
+                if p[0] == enemy and p[1] in ('B', 'Q'):
+                    return True
+                break
+
+        # Король (проверка соседних клеток)
+        for dr in (-1,0,1):
+            for dc in (-1,0,1):
+                if dr == 0 and dc == 0:
+                    continue
+                r, c = row + dr, col + dc
+                if 0 <= r < 8 and 0 <= c < 8 and self.board[r][c] == f"{enemy}K":
+                    return True
+        return False
+
+    def in_check(self, white_to_move):
+        """
+        Возвращает True, если король цвета white_to_move находится под шахом.
+        white_to_move – True для белых, False для чёрных.
+        """
+        king_color = 'w' if white_to_move else 'b'
+        king_pos = None
+        # Ищем позицию короля
+        for r in range(8):
+            for c in range(8):
+                if self.board[r][c] == f"{king_color}K":
+                    king_pos = (r, c)
+                    break
+            if king_pos:
+                break
+        if not king_pos:   # на случай ошибки (король отсутствует) считаем шахом
+            return True
+        return self.is_square_under_attack(king_pos[0], king_pos[1], king_color)
+
+    # ------------------- Определение окончания игры (мат/пат) -------------------
+
+    def check_game_state(self):
+        """
+        Обновляет флаги checkmate и stalemate, а также результат партии.
+        Вызывается после каждого хода (при update_state=True).
+        """
+        if self.in_check(self.white_to_move):
+            if not self.get_valid_moves():
+                self.checkmate = True
+                self.stalemate = False
+                self.result = 'Black wins by checkmate' if self.white_to_move else 'White wins by checkmate'
+                self.end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                self.update_game_status('completed')
+            else:
+                self.checkmate = False
+                self.stalemate = False
+        else:
+            if not self.get_valid_moves():
+                self.stalemate = True
+                self.checkmate = False
+                self.result = 'Draw by stalemate'
+                self.end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                self.update_game_status('completed')
+            elif self.is_only_kings():
+                self.stalemate = True
+                self.result = 'Draw by insufficient material'
+                self.end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                self.update_game_status('completed')
+            else:
+                self.stalemate = False
+                self.checkmate = False
+
+    def is_only_kings(self):
+        """
+        Проверяет, остались ли на доске только короли (недостаточно материала для мата).
+        """
+        for row in self.board:
+            for piece in row:
+                if piece != '--' and piece[1] != 'K':
+                    return False
+        return True
+
+    # ------------------- Работа с базой данных и PGN -------------------
+
+    def update_game_status(self, status):
+        """Обновляет статус партии в БД (завершена или в процессе)."""
+        if self.game_id:
+            update_game(self.game_id,
+                        [move.to_dict() for move in self.move_log],
+                        self.result, self.end_time, status)
+
+    def save_current_game(self):
+        """Сохраняет текущее состояние партии (ходы, результат) в БД."""
+        if self.game_id:
+            update_game(self.game_id,
+                        [move.to_dict() for move in self.move_log],
+                        self.result, self.end_time,
+                        'completed' if self.result else 'in_progress')
+
+    def save_game_completion(self):
+        """Сохраняет завершённую партию и экспортирует её в PGN."""
+        if self.game_id and self.result:
+            self.update_game_status('completed')
+            self.export_pgn()
+
+    def export_pgn(self):
+        """Экспортирует партию в файл в формате PGN (Portable Game Notation)."""
+        if not self.game_id:
+            return
+        pgn = (f"[Event \"Chess Endgame\"]\n[Site \"Local\"]\n"
+               f"[Date \"{self.start_time.split(' ')[0]}\"]\n[Round \"-\"]\n"
+               f"[White \"{self.white_player}\"]\n[Black \"{self.black_player}\"]\n"
+               f"[Result \"{self.result}\"]\n\n")
+        move_text = ''
+        for i in range(0, len(self.move_log), 2):
+            num = i // 2 + 1
+            w = self.move_log[i].get_chess_notation()
+            b = self.move_log[i+1].get_chess_notation() if i+1 < len(self.move_log) else ''
+            move_text += f"{num}. {w} {b} "
+        move_text += self.result
+        pgn += move_text
+        # Имя файла включает время начала и ID партии
+        filename = f"game_{self.start_time.replace(':', '-').replace(' ', '_')}_id_{self.game_id}.pgn"
+        with open(filename, 'w') as f:
+            f.write(pgn)
+
+    # ------------------- Отрисовка (PyGame) -------------------
+
+    def draw(self, win, images, selected_square=None, valid_moves=None):
+        """Отрисовывает всё игровое окно: доску, фигуры, сообщения о состоянии игры."""
+        self.draw_board(win, selected_square, valid_moves)
+        self.draw_pieces(win, images)
+        self.draw_game_state(win)
+
+    def draw_board(self, win, selected_square, valid_moves):
+        """Рисует шахматную доску (чередующиеся клетки), выделяет выбранную клетку и возможные ходы."""
+        colors = [WHITE, GRAY]
+        for r in range(8):
+            for c in range(8):
+                color = colors[(r + c) % 2]
+                rect = pygame.Rect(c * settings.CELL_SIZE, r * settings.CELL_SIZE,
+                                   settings.CELL_SIZE, settings.CELL_SIZE)
+                pygame.draw.rect(win, color, rect)
+                if selected_square and (r, c) == selected_square:
+                    pygame.draw.rect(win, BLUE, rect, 3)            # синяя рамка для выбранной клетки
+                if valid_moves:
+                    for move in valid_moves:
+                        if move.end_row == r and move.end_col == c:
+                            center = (c * settings.CELL_SIZE + settings.CELL_SIZE // 2,
+                                      r * settings.CELL_SIZE + settings.CELL_SIZE // 2)
+                            pygame.draw.circle(win, GREEN, center, 10)   # зелёные кружки для возможных ходов
+
+    def draw_pieces(self, win, images):
+        """Рисует фигуры на доске (изображения из словаря images)."""
+        for r in range(8):
+            for c in range(8):
+                piece = self.board[r][c]
+                if piece != '--':
+                    img = images.get(piece)
+                    if img:
+                        win.blit(img, (c * settings.CELL_SIZE, r * settings.CELL_SIZE,
+                                       settings.CELL_SIZE, settings.CELL_SIZE))
+
+    def draw_game_state(self, win):
+        """Выводит на экран сообщения: 'Шах и мат!', 'Пат!', 'Шах!'."""
+        if self.checkmate:
+            font = pygame.font.SysFont('Arial', 36)
+            text = font.render('Шах и мат!', True, RED)
+            win.blit(text, (settings.WINDOW_WIDTH // 2 - text.get_width() // 2,
+                            settings.WINDOW_HEIGHT // 2 - text.get_height() // 2))
+        elif self.stalemate:
+            font = pygame.font.SysFont('Arial', 36)
+            text = font.render('Пат!', True, RED)
+            win.blit(text, (settings.WINDOW_WIDTH // 2 - text.get_width() // 2,
+                            settings.WINDOW_HEIGHT // 2 - text.get_height() // 2))
+        elif self.in_check(self.white_to_move):
+            font = pygame.font.SysFont('Arial', 24)
+            text = font.render('Шах!', True, RED)
+            win.blit(text, (10, 10))
+
+    def is_move_valid(self, move):
+        """Проверяет, является ли ход легальным (использует get_valid_moves)."""
+        return move in self.get_valid_moves()
+
+    def get_piece_moves(self, r, c):
+        """
+        Возвращает список легальных ходов для фигуры, стоящей на клетке (r,c).
+        Используется в интерфейсе при выборе фигуры игроком.
+        """
+        piece = self.board[r][c]
+        if piece == '--':
+            return []
+        if (self.white_to_move and piece[0] != 'w') or (not self.white_to_move and piece[0] != 'b'):
+            return []
+        moves = []
+        typ = piece[1]
+        if typ == 'K':
+            self.get_king_moves(r, c, moves)
+        elif typ == 'P':
+            self.get_pawn_moves(r, c, moves)
+        elif typ == 'Q':
+            self.get_queen_moves(r, c, moves)
+        elif typ == 'R':
+            self.get_rook_moves(r, c, moves)
+        elif typ == 'B':
+            self.get_bishop_moves(r, c, moves)
+        elif typ == 'N':
+            self.get_knight_moves(r, c, moves)
+        # Фильтруем ходы, чтобы после хода свой король не оказался под шахом
+        valid = []
+        current_color = self.white_to_move
+        for move in moves:
+            copy_game = deepcopy(self)                # делаем копию игры (безопасно)
+            copy_game.make_move(move, update_state=False)
+            if not copy_game.in_check(current_color):
+                valid.append(move)
+        return valid
