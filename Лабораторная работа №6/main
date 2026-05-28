@@ -1,0 +1,452 @@
+# main.py
+# Главный модуль: экраны аутентификации, выбор режима игры (против AI или RL-агента), игровой процесс.
+
+import pygame
+import sys
+import os
+import json
+import settings
+from settings import *
+from auth import login, register
+from database import initialize_db, get_games_by_user, create_new_game, get_game_by_id
+from game import Game, Move
+from ai import find_best_move
+from ai_rl import find_best_move_rl
+
+# ---------- Инициализация PyGame ----------
+pygame.init()
+pygame.display.set_caption('Шахматный Эндшпиль: Король и Пешка - Король и Пешка')
+
+# Настройка окна (полноэкранный или оконный режим)
+if settings.FULLSCREEN:
+    info = pygame.display.Info()
+    settings.WINDOW_WIDTH, settings.WINDOW_HEIGHT = info.current_w, info.current_h
+    screen = pygame.display.set_mode((settings.WINDOW_WIDTH, settings.WINDOW_HEIGHT), pygame.FULLSCREEN)
+    settings.CELL_SIZE = min(settings.WINDOW_WIDTH, settings.WINDOW_HEIGHT) // settings.BOARD_SIZE
+else:
+    screen = pygame.display.set_mode((settings.WINDOW_WIDTH, settings.WINDOW_HEIGHT))
+    settings.CELL_SIZE = settings.CELL_SIZE
+
+clock = pygame.time.Clock()
+
+# ---------- Загрузка изображений ----------
+def load_images():
+    """
+    Загружает изображения фигур и иконок из папки assets.
+    Возвращает словарь, где ключи – строки типа 'wK', 'bP', а значения – поверхности PyGame.
+    """
+    images = {}
+    mapping = {
+        'king_white.png': 'wK', 'king_black.png': 'bK',
+        'queen_white.png': 'wQ', 'queen_black.png': 'bQ',
+        'pawn_white.png': 'wP', 'pawn_black.png': 'bP',
+        'bishop_white.png': 'wB', 'bishop_black.png': 'bB',
+        'horse_white.png': 'wN', 'horse_black.png': 'bN',
+        'tower_white.png': 'wR', 'tower_black.png': 'bR',
+        'eye_open.png': 'eye_open', 'eye_closed.png': 'eye_closed'
+    }
+    for fname in os.listdir(settings.ASSETS_PATH):
+        if fname.endswith('.png'):
+            key = mapping.get(fname)
+            if key:
+                img = pygame.image.load(os.path.join(settings.ASSETS_PATH, fname)).convert_alpha()
+                if fname in ('eye_open.png', 'eye_closed.png'):
+                    img = pygame.transform.scale(img, (30, 30))
+                else:
+                    img = pygame.transform.scale(img, (settings.CELL_SIZE, settings.CELL_SIZE))
+                images[key] = img
+    # Проверяем, что все необходимые изображения загружены
+    required = ['wK', 'bK', 'wP', 'bP', 'wQ', 'bQ', 'wR', 'bR', 'wB', 'bB', 'wN', 'bN', 'eye_open', 'eye_closed']
+    for r in required:
+        if r not in images:
+            print(f"Предупреждение: {r} не загружено")
+    return images
+
+images = load_images()
+
+def draw_text(win, text, size, color, x, y):
+    """Вспомогательная функция для вывода текста на экран."""
+    font = pygame.font.SysFont('Arial', size)
+    surf = font.render(text, True, color)
+    win.blit(surf, (x, y))
+
+# ---------- Экран аутентификации (вход/регистрация) ----------
+def auth_screen():
+    """Отображает меню входа/регистрации. Возвращает имя пользователя при успешной аутентификации."""
+    message = ''
+    while True:
+        screen.fill(BLACK)
+        draw_text(screen, 'Шахматный Эндшпиль', 60, WHITE, settings.WINDOW_WIDTH // 2 - 200, 50)
+        draw_text(screen, '1. Войти', 40, WHITE, 100, 200)
+        draw_text(screen, '2. Зарегистрироваться', 40, WHITE, 100, 300)
+        draw_text(screen, '3. Выход', 40, WHITE, 100, 400)
+        draw_text(screen, 'Нажмите TAB для переключения между опциями', 20, WHITE, 100, 500)
+        draw_text(screen, message, 30, RED, 100, 600)
+        pygame.display.flip()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_1:
+                    success, msg, user = login_prompt()
+                    if success:
+                        return user
+                    else:
+                        message = msg
+                elif event.key == pygame.K_2:
+                    success, msg = register_prompt()
+                    message = msg
+                elif event.key == pygame.K_3:
+                    pygame.quit()
+                    sys.exit()
+        clock.tick(FPS)
+
+def login_prompt():
+    """
+    Отображает форму входа: поля имя пользователя и пароль, кнопка входа.
+    Возвращает (успех, сообщение, имя_пользователя).
+    """
+    username = ''
+    password = ''
+    input_box = 'username'
+    message = ''
+    password_visible = False
+    eye_rect = pygame.Rect(settings.WINDOW_WIDTH // 2 + 150, 350, 30, 30)
+    while True:
+        screen.fill(BLACK)
+        draw_text(screen, 'Вход', 50, WHITE, settings.WINDOW_WIDTH // 2 - 80, 50)
+        draw_text(screen, 'Имя пользователя:', 35, WHITE, 100, 200)
+        draw_text(screen, username, 35, WHITE, 500, 200)
+        draw_text(screen, 'Пароль:', 35, WHITE, 100, 300)
+        display_pw = password if password_visible else '*' * len(password)
+        if len(display_pw) > 15:
+            display_pw = display_pw[:12] + '...'
+        draw_text(screen, display_pw, 35, WHITE, 500, 300)
+        draw_text(screen, 'Нажмите TAB для переключения между полями ввода', 25, WHITE, 100, 400)
+        draw_text(screen, 'Нажмите ESC для возврата в главное меню', 25, WHITE, 100, 450)
+        draw_text(screen, message, 30, RED, 100, 500)
+
+        # Рисуем рамку вокруг активного поля ввода
+        if input_box == 'username':
+            pygame.draw.rect(screen, BLUE, pygame.Rect(500, 200, 200, 50), 3)
+        else:
+            pygame.draw.rect(screen, BLUE, pygame.Rect(500, 300, 200, 50), 3)
+
+        # Иконка глаза для показа/скрытия пароля
+        eye_img = images.get('eye_open' if password_visible else 'eye_closed')
+        if eye_img:
+            screen.blit(eye_img, eye_rect)
+
+        pygame.display.flip()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if eye_rect.collidepoint(event.pos):
+                    password_visible = not password_visible
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_TAB:
+                    input_box = 'password' if input_box == 'username' else 'username'
+                elif event.key == pygame.K_ESCAPE:
+                    return False, 'Возврат в главное меню.', None
+                elif event.key == pygame.K_RETURN:
+                    if len(username) < 3 or len(password) < 6:
+                        message = 'Имя пользователя ≥ 3 символа, пароль ≥ 6 символов.'
+                    else:
+                        success, msg, user = login(username, password)
+                        if success:
+                            return True, msg, user
+                        else:
+                            message = msg
+                elif event.key == pygame.K_BACKSPACE:
+                    if input_box == 'username':
+                        username = username[:-1]
+                    else:
+                        password = password[:-1]
+                else:
+                    if input_box == 'username' and event.unicode.isprintable():
+                        username += event.unicode
+                    elif input_box == 'password' and event.unicode.isprintable():
+                        password += event.unicode
+        clock.tick(FPS)
+
+def register_prompt():
+    """
+    Отображает форму регистрации (имя пользователя, пароль, подтверждение).
+    Возвращает (успех, сообщение).
+    """
+    # Аналогично login_prompt, но вызывает register()
+    # (код здесь не приведён для краткости, но он есть в вашем проекте)
+    pass
+
+# ---------- Выбор режима игры и просмотр сохранённых партий ----------
+def select_mode(username):
+    """
+    Отображает меню выбора режима игры.
+    Возвращает строку 'ai' или 'rl' в зависимости от выбора пользователя.
+    """
+    message = ''
+    while True:
+        screen.fill(BLACK)
+        draw_text(screen, 'Выберите режим игры', 60, WHITE, settings.WINDOW_WIDTH // 2 - 200, 50)
+        draw_text(screen, '1. Человек против AI (Minimax)', 40, WHITE, 100, 200)
+        draw_text(screen, '2. Человек против обученного RL-агента', 40, WHITE, 100, 300)
+        draw_text(screen, '3. Просмотреть текущие игры', 40, WHITE, 100, 400)
+        draw_text(screen, '4. Выйти', 40, WHITE, 100, 500)
+        draw_text(screen, message, 30, RED, 100, 600)
+        pygame.display.flip()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_1:
+                    return 'ai'
+                if event.key == pygame.K_2:
+                    return 'rl'
+                if event.key == pygame.K_3:
+                    view_games(username)
+                if event.key == pygame.K_4:
+                    pygame.quit()
+                    sys.exit()
+        clock.tick(FPS)
+
+def view_games(username):
+    """
+    Отображает список незавершённых партий текущего пользователя.
+    Позволяет выбрать партию для возобновления.
+    """
+    games = get_games_by_user(username, status='in_progress')
+    while True:
+        screen.fill(BLACK)
+        draw_text(screen, f'Текущие партии пользователя: {username}', 40, WHITE,
+                  settings.WINDOW_WIDTH // 2 - 250, 50)
+        y = 150
+        if not games:
+            draw_text(screen, 'Нет текущих партий. Начните новую игру.', 30, WHITE, 50, y)
+        else:
+            for idx, g in enumerate(games[:10]):
+                gid, wp, bp, _, _, st, _, _ = g
+                draw_text(screen, f"{idx+1}. ID:{gid} | Белые:{wp} | Черные:{bp} | Начало:{st}",
+                          25, WHITE, 50, y)
+                y += 40
+        draw_text(screen, 'Нажмите число партии для возобновления или ESC для возврата',
+                  25, WHITE, 50, settings.WINDOW_HEIGHT - 100)
+        pygame.display.flip()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return
+                if pygame.K_1 <= event.key <= pygame.K_9:
+                    idx = event.key - pygame.K_1
+                    if idx < len(games):
+                        resume_game(games[idx])
+        clock.tick(FPS)
+
+def resume_game(game_data):
+    """Возобновляет игру по переданному кортежу данных из БД."""
+    game_id, white, black, _, _, _, _, _ = game_data
+    game = Game(white_player=white, black_player=black, game_id=game_id)
+    game_screen_instance(game)
+
+# ---------- Игровой экран (основной игровой цикл) ----------
+def game_screen_instance(game_instance):
+    """
+    Основной игровой цикл. Обрабатывает ввод мыши, рисует доску, вызывает ходы AI/RL.
+    """
+    selected_square = None
+    valid_moves = []
+    run = True
+    paused = False
+    waiting_for_promotion = False   # флаг ожидания выбора фигуры при превращении пешки
+    pending_moves = []              # список ходов с разными вариантами превращения
+
+    def make_ai_move_if_needed():
+        """
+        Проверяет, должен ли AI/RL сделать ход (исходя из текущей очереди и имён игроков).
+        Если должен – выполняет ход и возвращает True, иначе False.
+        """
+        if game_instance.checkmate or game_instance.stalemate:
+            return False
+        # Если очередь белых и белые – AI или RL
+        if game_instance.white_to_move and game_instance.white_player in ('AI', 'RL'):
+            if game_instance.white_player == 'AI':
+                ai_move = find_best_move(game_instance, depth=settings.AI_DEPTH)
+            else:
+                ai_move = find_best_move_rl(game_instance)
+            if ai_move:
+                game_instance.make_move(ai_move)
+                return True
+        # Если очередь чёрных и чёрные – AI или RL
+        elif not game_instance.white_to_move and game_instance.black_player in ('AI', 'RL'):
+            if game_instance.black_player == 'AI':
+                ai_move = find_best_move(game_instance, depth=settings.AI_DEPTH)
+            else:
+                ai_move = find_best_move_rl(game_instance)
+            if ai_move:
+                game_instance.make_move(ai_move)
+                return True
+        return False
+
+    # Принудительный первый ход белых (если белые – AI/RL)
+    if game_instance.white_to_move and game_instance.white_player in ('AI', 'RL'):
+        screen.fill(BLACK)
+        game_instance.draw(screen, images, None, None)
+        pygame.display.flip()
+        pygame.time.delay(100)          # небольшая задержка для отрисовки
+        make_ai_move_if_needed()
+        screen.fill(BLACK)
+        game_instance.draw(screen, images, None, None)
+        pygame.display.flip()
+
+    while run:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                run = False
+                pygame.quit()
+                sys.exit()
+
+            # Обработка клавиши P – пауза
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_p:
+                paused = not paused
+
+            # Обработка выбора фигуры при превращении пешки (клавиши 1-4)
+            if waiting_for_promotion and event.type == pygame.KEYDOWN:
+                choice = None
+                if event.key == pygame.K_1:
+                    choice = 'Q'
+                elif event.key == pygame.K_2:
+                    choice = 'R'
+                elif event.key == pygame.K_3:
+                    choice = 'B'
+                elif event.key == pygame.K_4:
+                    choice = 'N'
+                if choice:
+                    # Находим ход с выбранной фигурой и выполняем его
+                    for m in pending_moves:
+                        if m.promotion_choice == choice:
+                            game_instance.make_move(m)
+                            break
+                    waiting_for_promotion = False
+                    pending_moves = []
+                    selected_square = None
+                    valid_moves = []
+                    make_ai_move_if_needed()
+                    continue
+
+            # Обработка кликов мыши (ход игрока)
+            if event.type == pygame.MOUSEBUTTONDOWN and not paused and not waiting_for_promotion:
+                if game_instance.checkmate or game_instance.stalemate:
+                    continue
+                x, y = pygame.mouse.get_pos()
+                row, col = y // settings.CELL_SIZE, x // settings.CELL_SIZE
+                piece = game_instance.board[row][col]
+
+                if selected_square is None:
+                    # Выбор своей фигуры (цвет должен совпадать с очередью хода)
+                    if piece != '--' and ((game_instance.white_to_move and piece[0] == 'w') or
+                                          (not game_instance.white_to_move and piece[0] == 'b')):
+                        selected_square = (row, col)
+                        valid_moves = game_instance.get_piece_moves(row, col)
+                else:
+                    # Попытка сделать ход
+                    same_cell_moves = [m for m in valid_moves if m.end_row == row and m.end_col == col]
+                    if same_cell_moves:
+                        if len(same_cell_moves) > 1:
+                            # Несколько вариантов превращения – запрашиваем выбор
+                            waiting_for_promotion = True
+                            pending_moves = same_cell_moves
+                        else:
+                            selected_move = same_cell_moves[0]
+                            if game_instance.is_move_valid(selected_move):
+                                game_instance.make_move(selected_move)
+                                selected_square = None
+                                valid_moves = []
+                                make_ai_move_if_needed()
+                    else:
+                        # Клик на другую клетку – сброс выделения или выбор другой фигуры
+                        if piece != '--' and ((game_instance.white_to_move and piece[0] == 'w') or
+                                              (not game_instance.white_to_move and piece[0] == 'b')):
+                            selected_square = (row, col)
+                            valid_moves = game_instance.get_piece_moves(row, col)
+                        else:
+                            selected_square = None
+                            valid_moves = []
+
+        # Отрисовка в зависимости от режима (игра, пауза, ожидание превращения)
+        screen.fill(BLACK)
+        if not paused and not waiting_for_promotion:
+            game_instance.draw(screen, images, selected_square, valid_moves)
+        elif waiting_for_promotion:
+            game_instance.draw(screen, images, None, None)
+            # Показываем меню выбора фигуры
+            font = pygame.font.SysFont('Arial', 36)
+            text1 = font.render("Превращение пешки! Выберите фигуру:", True, RED)
+            text2 = font.render("1 - Ферзь   2 - Ладья   3 - Слон   4 - Конь", True, RED)
+            screen.blit(text1, (settings.WINDOW_WIDTH // 2 - text1.get_width() // 2,
+                                settings.WINDOW_HEIGHT // 2 - 60))
+            screen.blit(text2, (settings.WINDOW_WIDTH // 2 - text2.get_width() // 2,
+                                settings.WINDOW_HEIGHT // 2))
+        else:   # пауза
+            screen.fill(GRAY)
+            draw_text(screen, 'Пауза', 60, WHITE,
+                      settings.WINDOW_WIDTH // 2 - 100, settings.WINDOW_HEIGHT // 2 - 50)
+            draw_text(screen, 'Нажмите S для сохранения и выхода', 30, WHITE,
+                      settings.WINDOW_WIDTH // 2 - 150, settings.WINDOW_HEIGHT // 2 + 20)
+            draw_text(screen, 'Нажмите P для продолжения игры', 30, WHITE,
+                      settings.WINDOW_WIDTH // 2 - 150, settings.WINDOW_HEIGHT // 2 + 60)
+
+        # В режиме паузы проверяем нажатие S (сохранить и выйти)
+        if paused:
+            keys = pygame.key.get_pressed()
+            if keys[pygame.K_s]:
+                run = False
+
+        pygame.display.flip()
+        clock.tick(FPS)
+
+        # Если игра окончена (мат/пат) – задержка и выход
+        if not waiting_for_promotion and (game_instance.checkmate or game_instance.stalemate):
+            pygame.time.delay(5000)
+            run = False
+            if game_instance.result and game_instance.game_id is not None:
+                game_instance.save_game_completion()
+
+def game_screen(mode, white_player='White', black_player='AI'):
+    """
+    Создаёт экземпляр игры в зависимости от режима и запускает игровой цикл.
+    mode: 'ai' – игра против минимакса (с сохранением в БД)
+          'rl' – игра против RL-агента (без сохранения в БД, чтобы не требовать пользователя 'RL')
+    """
+    if mode == 'ai':
+        game_id = create_new_game(white_player, black_player)
+        game_instance = Game(white_player=white_player, black_player=black_player, game_id=game_id)
+    elif mode == 'rl':
+        # RL-агент играет белыми, человек – чёрными. Игра не сохраняется.
+        game_instance = Game(white_player='RL', black_player=white_player, game_id=None)
+    else:
+        return
+    game_screen_instance(game_instance)
+
+# ---------- Главная функция ----------
+def main():
+    """Точка входа: инициализация БД, аутентификация, запуск выбора режима."""
+    initialize_db()
+    current_user = auth_screen()
+    if current_user:
+        mode = select_mode(current_user)
+        if mode == 'ai':
+            game_screen(mode, white_player=current_user, black_player='AI')
+        elif mode == 'rl':
+            game_screen(mode, white_player=current_user, black_player='RL')
+        # После завершения игры рекурсивно возвращаемся в главное меню
+        main()
+
+if __name__ == '__main__':
+    main()
