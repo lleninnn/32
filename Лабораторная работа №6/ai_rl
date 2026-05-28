@@ -1,0 +1,79 @@
+# ai_rl.py
+# Модуль для использования обученного RL-агента (Q-learning).
+
+import pickle
+import random
+from collections import defaultdict
+
+def state_key(game):
+    """
+    Преобразует текущую доску в строку-ключ для Q-таблицы.
+    Объединяет все клетки доски в одну строку (каждая клетка – '--' или 'wK', 'bP' и т.п.).
+    """
+    return ''.join(piece for row in game.board for piece in row)
+
+def move_str(move):
+    """
+    Преобразует объект Move в строковое представление хода в формате 'e2e4'.
+    Используется как ключ для Q-таблицы.
+    """
+    cols = 'abcdefgh'
+    return cols[move.start_col] + str(8 - move.start_row) + \
+           cols[move.end_col] + str(8 - move.end_row)
+
+# Глобальная переменная для хранения Q-таблицы (загружается один раз)
+Q = None
+
+def load_q_table(filename='q_table_final_v3.pkl'):
+    """
+    Загружает Q-таблицу из pickle-файла.
+    Если файл не найден или возникает ошибка, создаёт пустую таблицу (defaultdict(float)).
+    Возвращает True при успешной загрузке, иначе False.
+    """
+    global Q
+    try:
+        with open(filename, 'rb') as f:
+            data = pickle.load(f)
+        Q = defaultdict(float, data)            # преобразуем в defaultdict для удобства
+        print(f"[RL] Загружена таблица: {len(Q)} записей из {filename}")
+        return True
+    except FileNotFoundError:
+        print(f"[RL] Файл {filename} не найден. Буду использовать случайные ходы.")
+        Q = defaultdict(float)
+        return False
+    except Exception as e:
+        print(f"[RL] Ошибка загрузки: {e}")
+        Q = defaultdict(float)
+        return False
+
+def find_best_move_rl(game, depth=None):
+    """
+    Выбирает лучший ход для текущего игрока на основе загруженной Q-таблицы.
+    Параметр depth не используется (оставлен для совместимости с интерфейсом AI).
+    Возвращает объект Move или None, если ходов нет.
+    """
+    global Q
+    if Q is None:                               # если таблица ещё не загружена
+        load_q_table()
+
+    legal = game.get_valid_moves()              # все легальные ходы
+    if not legal:
+        return None
+
+    state = state_key(game)                     # текущее состояние (строка)
+    best_move = None
+    best_q = -float('inf')
+    # Перебираем все легальные ходы, находим ход с максимальным Q(s,a)
+    for m in legal:
+        q = Q.get((state, move_str(m)), 0.0)    # если хода нет в таблице, Q=0
+        if q > best_q:
+            best_q = q
+            best_move = m
+
+    # Если все Q равны 0 (таблица пуста), выбираем случайный ход
+    if best_move is None:
+        best_move = random.choice(legal)
+    return best_move
+
+# При импорте модуля сразу пробуем загрузить таблицу (имя файла можно изменить)
+load_q_table()
