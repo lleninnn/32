@@ -1,0 +1,110 @@
+# ai.py
+# Реализация минимакса с альфа-бета отсечением для выбора хода ИИ.
+
+import math
+import random
+
+def find_best_move(game, depth):
+    """
+    Находит лучший ход для текущего игрока (белые максимизируют, чёрные минимизируют).
+    Аргументы:
+        game (Game) – объект игры, содержащий текущее состояние доски.
+        depth (int) – глубина поиска (количество полуходов).
+    Возвращает:
+        Move – лучший найденный ход, или None, если ходов нет.
+    """
+    # Если глубина 0, возвращаем случайный легальный ход (используется для быстрого обучения)
+    if depth == 0:
+        valid = game.get_valid_moves()          # получаем все легальные ходы
+        return random.choice(valid) if valid else None
+
+    best_move = None
+    if game.white_to_move:          # белые – максимизирующий игрок
+        best_value = -math.inf      # начальное значение – минус бесконечность
+        for move in game.get_valid_moves():   # перебираем все возможные ходы
+            game.make_move(move, update_state=False)   # временно делаем ход (без сохранения в БД)
+            # Рекурсивно оцениваем позицию после хода (следующий игрок – минимизирующий)
+            move_value = minimax(game, depth - 1, -math.inf, math.inf, False)
+            game.undo_move()                      # отменяем временный ход
+            if move_value > best_value:           # нашли лучший ход для белых
+                best_value = move_value
+                best_move = move
+    else:                           # чёрные – минимизирующий игрок
+        best_value = math.inf       # начальное значение – плюс бесконечность
+        for move in game.get_valid_moves():
+            game.make_move(move, update_state=False)
+            move_value = minimax(game, depth - 1, -math.inf, math.inf, True)
+            game.undo_move()
+            if move_value < best_value:           # нашли лучший ход для чёрных (минимальную оценку)
+                best_value = move_value
+                best_move = move
+
+    # Вывод информации о выбранном ходе (может быть подавлен при обучении)
+    print(f"AI выбрал ход: {best_move.get_chess_notation() if best_move else 'Нет доступных ходов'}")
+    return best_move
+
+
+def minimax(game, depth, alpha, beta, is_maximizing):
+    """
+    Рекурсивный минимакс с альфа-бета отсечением. Возвращает оценку позиции.
+    Аргументы:
+        game (Game) – объект игры.
+        depth (int) – оставшаяся глубина поиска.
+        alpha (float) – лучшее значение для максимизирующего игрока.
+        beta (float) – лучшее значение для минимизирующего игрока.
+        is_maximizing (bool) – True, если ход максимизирующего игрока (белые).
+    Возвращает:
+        float – численная оценка позиции (чем выше, тем лучше для белых).
+    """
+    # Базовый случай: достигнута глубина 0 или игра закончена (мат/пат)
+    if depth == 0 or game.checkmate or game.stalemate:
+        return evaluate_game(game)            # оцениваем позицию
+
+    if is_maximizing:   # ход белых (максимизируем)
+        max_eval = -math.inf
+        for move in game.get_valid_moves():
+            game.make_move(move, update_state=False)
+            eval = minimax(game, depth - 1, alpha, beta, False)   # следующий ход – чёрные
+            game.undo_move()
+            max_eval = max(max_eval, eval)      # сохраняем максимальную оценку
+            alpha = max(alpha, eval)            # обновляем alpha
+            if beta <= alpha:                   # альфа-бета отсечение: дальнейшие ходы не улучшат результат
+                break
+        return max_eval
+    else:               # ход чёрных (минимизируем)
+        min_eval = math.inf
+        for move in game.get_valid_moves():
+            game.make_move(move, update_state=False)
+            eval = minimax(game, depth - 1, alpha, beta, True)    # следующий ход – белые
+            game.undo_move()
+            min_eval = min(min_eval, eval)      # сохраняем минимальную оценку
+            beta = min(beta, eval)              # обновляем beta
+            if beta <= alpha:                   # альфа-бета отсечение
+                break
+        return min_eval
+
+
+def evaluate_game(game):
+    """
+    Оценивает позицию по материалу (ценность фигур) и добавляет случайный фактор.
+    Ценности: Король=0, Ферзь=9, Ладья=5, Слон/Конь=3, Пешка=1.
+    Возвращает: float (оценка позиции для белых, с учётом случайности).
+    """
+    piece_values = {'K': 0, 'Q': 9, 'R': 5, 'B': 3, 'N': 3, 'P': 1}
+    white_score = 0
+    black_score = 0
+    # Проходим по всем клеткам доски
+    for row in game.board:
+        for piece in row:
+            if piece == '--':
+                continue
+            val = piece_values.get(piece[1], 0)   # берём ценность по типу фигуры
+            if piece[0] == 'w':
+                white_score += val
+            else:
+                black_score += val
+    # Добавляем случайный фактор для разнообразия ходов (избегаем зацикливания)
+    random_factor = random.uniform(-0.5, 0.5)
+    evaluation = (white_score - black_score) + random_factor
+    # print(...) закомментирован, чтобы не захламлять консоль
+    return evaluation
