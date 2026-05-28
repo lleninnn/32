@@ -1,0 +1,202 @@
+# train_continue.py
+# Продолжение обучения с ранее сохранённой Q-таблицы (например, q_table_final.pkl).
+# Использует более высокое ε_start для дополнительного исследования.
+
+import random
+import pickle
+import sys
+from collections import defaultdict, deque
+from game import Game
+import ai
+
+# ---------- Подавление вывода AI (аналогично train_fast.py) ----------
+_original_find_best_move = ai.find_best_move
+
+def _silent_find_best_move(game, depth):
+    old_stdout = sys.stdout
+    if sys.platform == 'win32':
+        sys.stdout = open('nul', 'w')
+    else:
+        sys.stdout = open('/dev/null', 'w')
+    try:
+        return _original_find_best_move(game, depth)
+    finally:
+        sys.stdout.close()
+        sys.stdout = old_stdout
+
+ai.find_best_move = _silent_find_best_move
+find_best_move = _silent_find_best_move
+
+# ---------- Гиперпараметры (более высокое ε_start) ----------
+EPISODES = 1500
+AI_DEPTH = 1
+ALPHA = 0.15
+GAMMA = 0.95
+EPSILON_START = 0.9
+EPSILON_END = 0.05
+EPSILON_DECAY = 0.999
+
+# Награды (те же)
+REWARD_WIN = 100.0
+REWARD_LOSS = -100.0
+REWARD_DRAW = -10.0
+STEP_PENALTY = -0.01
+REWARD_CAPTURE_PAWN = 5.0
+REWARD_PAWN_ADVANCE = 1.0
+REWARD_PROMOTION = 20.0
+REWARD_CHECK = 2.0
+
+# ---------- Вспомогательные функции (те же) ----------
+def state_key(game):
+    return ''.join(piece for row in game.board for piece in row)
+
+def move_str(move):
+    cols = 'abcdefgh'
+    return cols[move.start_col] + str(8 - move.start_row) + \
+           cols[move.end_col] + str(8 - move.end_row)
+
+def reset_game(game):
+    game.board = game.create_initial_board()
+    game.white_to_move = True
+    game.move_log.clear()
+    game.checkmate = game.stalemate = False
+    game.result = None
+
+def capture_reward(move):
+    if move.piece_captured != '--' and move.piece_captured[1] == 'P':
+        return REWARD_CAPTURE_PAWN
+    return 0.0
+
+def advance_reward(move):
+    if move.piece_moved[1] != 'P' or move.piece_moved[0] != 'w':
+        return 0.0
+    return max(0, (move.start_row - move.end_row)) * REWARD_PAWN_ADVANCE
+
+# ---------- Загрузка и сохранение ----------
+def load_q_table(filename='q_table_final.pkl'):
+    try:
+        with open(filename, 'rb') as f:
+            data = pickle.load(f)
+        print(f"Загружена Q-таблица из {filename}, записей: {len(data)}")
+        return defaultdict(float, data)
+    except FileNotFoundError:
+        print(f"Файл {filename} не найден, создаём новую")
+        return defaultdict(float)
+
+def save_q_table(q_table, filename='q_table_final_v2.pkl'):
+    with open(filename, 'wb') as f:
+        pickle.dump(dict(q_table), f)
+    print(f"Q-таблица сохранена в {filename}")
+
+# ---------- Основной цикл (аналогичен train_fast.py) ----------
+def train():
+    game = Game()
+    Q = load_q_table('q_table_final.pkl')   # загружаем предыдущую модель
+    epsilon = EPSILON_START
+    wins = losses = draws = 0
+    last100 = deque(maxlen=100)
+
+    print("Продолжение обучения против минимакса глубины 1")
+    print(f"Добавляем {EPISODES} эпизодов, α={ALPHA}, γ={GAMMA}, ε_start={EPSILON_START}")
+    print("=" * 70)
+
+    for ep in range(1, EPISODES + 1):
+        reset_game(game)
+        done = False
+        result = None
+
+        while not done:
+            state = state_key(game)
+            legal = game.get_valid_moves()
+            if not legal:
+                break
+
+            if random.random() < epsilon:
+                action = random.choice(legal)
+            else:
+                qvals = [Q[(state, move_str(m))] for m in legal]
+                maxq = max(qvals)
+                best = [m for m, q in zip(legal, qvals) if q == maxq]
+                action = random.choice(best)
+
+            step_reward = STEP_PENALTY + capture_reward(action) + advance_reward(action)
+
+            game.make_move(action, update_state=False)
+            game.check_game_state()
+
+            if action.is_pawn_promotion:
+                step_reward += REWARD_PROMOTION
+            if game.in_check(False):
+                step_reward += REWARD_CHECK
+
+            if game.checkmate or game.stalemate:
+                if game.checkmate:
+                    if 'White wins' in game.result:
+                        final_reward = REWARD_WIN
+                        result = 'Win'
+                    else:
+                        final_reward = REWARD_LOSS
+                        result = 'Loss'
+                else:
+                    final_reward = REWARD_DRAW
+                    result = 'Draw'
+                step_reward += final_reward
+                Q[(state, move_str(action))] += ALPHA * (step_reward - Q[(state, move_str(action))])
+                done = True
+                continue
+
+            opp_action = find_best_move(game, depth=AI_DEPTH)
+            if opp_action:
+                game.make_move(opp_action, update_state=False)
+                game.check_game_state()
+            else:
+                game.check_game_state()
+
+            if game.checkmate or game.stalemate:
+                if game.checkmate:
+                    if 'White wins' in game.result:
+                        final_reward = REWARD_WIN
+                        result = 'Win'
+                    else:
+                        final_reward = REWARD_LOSS
+                        result = 'Loss'
+                else:
+                    final_reward = REWARD_DRAW
+                    result = 'Draw'
+                step_reward += final_reward
+                Q[(state, move_str(action))] += ALPHA * (step_reward - Q[(state, move_str(action))])
+                done = True
+                continue
+
+            next_state = state_key(game)
+            next_legal = game.get_valid_moves()
+            max_next = max((Q[(next_state, move_str(m))] for m in next_legal), default=0.0)
+            old_q = Q[(state, move_str(action))]
+            Q[(state, move_str(action))] = old_q + ALPHA * (step_reward + GAMMA * max_next - old_q)
+
+        if result == 'Win':
+            wins += 1
+            last100.append('Win')
+        elif result == 'Loss':
+            losses += 1
+            last100.append('Loss')
+        else:
+            draws += 1
+            last100.append('Draw')
+
+        epsilon = max(EPSILON_END, epsilon * EPSILON_DECAY)
+
+        if ep % 50 == 0:
+            win_rate = last100.count('Win') / len(last100) * 100 if last100 else 0
+            print(f"Эпизод {ep:4d} | {result:4s} | ε={epsilon:.3f} | "
+                  f"Всего: Побед {wins:3d} Поражений {losses:3d} Ничьих {draws:3d} | "
+                  f"Win% (посл.100) = {win_rate:5.1f}%")
+
+        if ep % 100 == 0:
+            save_q_table(Q, f'q_table_continue_ep{ep}.pkl')
+
+    save_q_table(Q, 'q_table_final_v2.pkl')
+    print(f"\nДополнительное обучение завершено! Побед {wins}, Поражений {losses}, Ничьих {draws}")
+
+if __name__ == '__main__':
+    train()
